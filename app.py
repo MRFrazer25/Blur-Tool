@@ -63,37 +63,57 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
     """Handles new file uploads, prepares image for editor, and cleans up old temp files."""
     if uploaded_file_path:
         try:
-            img = Image.open(uploaded_file_path).convert("RGBA")
-            logger.info(f"Image '{os.path.basename(uploaded_file_path)}' loaded successfully by user.")
+            # Validate uploaded_file_path
+            resolved_upload_path = os.path.realpath(uploaded_file_path)
+            system_temp_dir = os.path.realpath(tempfile.gettempdir())
+
+            if not resolved_upload_path.startswith(system_temp_dir):
+                logger.error(f"Security alert: Upload path '{uploaded_file_path}' resolves to '{resolved_upload_path}', which is outside the system temp directory '{system_temp_dir}'. Aborting upload.")
+                return (
+                    gr.update(value=None),
+                    gr.HTML("Invalid file path detected. Upload failed.", elem_classes="status-error"),
+                    gr.DownloadButton(visible=False),
+                    None,
+                    current_temp_file_for_download 
+                )
+            
+            img = Image.open(resolved_upload_path).convert("RGBA") # Use resolved path
+            logger.info(f"Image '{os.path.basename(resolved_upload_path)}' loaded successfully by user.")
             
             # Clean up previous temporary file for download, if one exists
-            if current_temp_file_for_download and os.path.exists(current_temp_file_for_download):
-                try:
-                    os.remove(current_temp_file_for_download)
-                    logger.info(f"Removed previous temporary download file: {current_temp_file_for_download}")
-                except Exception as e_rem:
-                    logger.error(f"Error removing old temp file {current_temp_file_for_download}: {e_rem}")
+            if current_temp_file_for_download:
+                resolved_temp_download_path = os.path.realpath(current_temp_file_for_download)
+                if not resolved_temp_download_path.startswith(system_temp_dir):
+                    logger.error(f"Security alert: Temp download path '{current_temp_file_for_download}' resolves to '{resolved_temp_download_path}', which is outside the system temp directory '{system_temp_dir}'. Skipping cleanup of this path.")
+                # Proceed with cleanup only if path is valid and file exists
+                elif os.path.exists(resolved_temp_download_path):
+                    try:
+                        os.remove(resolved_temp_download_path)
+                        logger.info(f"Removed previous temporary download file: {resolved_temp_download_path}")
+                    except Exception as e_rem:
+                        logger.error(f"Error removing old temp file {resolved_temp_download_path}: {e_rem}")
             
             return (
-                gr.update(value=img), # Update ImageEditor with the new PIL image
+                gr.update(value=img), 
                 gr.HTML("Image loaded successfully! You can now draw on it or get AI suggestions.", elem_classes="status-success"),
-                gr.DownloadButton(visible=False),  # Hide download button until new result
-                None, # Clear any previously displayed output image
-                None  # Reset temp file path state
+                gr.DownloadButton(visible=False), 
+                None, 
+                None 
             )
         except Exception as e:
             logger.error(f"Error processing uploaded file '{uploaded_file_path}': {e}", exc_info=True)
             return (
-                gr.update(value=None), # Clear editor on error
+                gr.update(value=None), 
                 gr.HTML(f"Error loading image: {str(e)}", elem_classes="status-error"),
                 gr.DownloadButton(visible=False),
                 None,
-                current_temp_file_for_download # Keep old temp file state on error
+                current_temp_file_for_download 
             )
     
-    # Case: No file uploaded (e.g., initial state or cleared upload)
+    # Case: No file uploaded
     return (
         gr.update(value=None), 
+        gr.HTML("No file provided or file cleared.", elem_classes="status-info"), # Added more specific message
         gr.DownloadButton(visible=False),
         None,
         current_temp_file_for_download
@@ -146,13 +166,19 @@ def handle_blur_click(editor_data, current_temp_file_for_download, blur_strength
             current_temp_file_for_download
         )
 
-    # Clean up previous temporary file for download
-    if current_temp_file_for_download and os.path.exists(current_temp_file_for_download):
-        try:
-            os.remove(current_temp_file_for_download)
-            logger.info(f"Removed old temp download file: {current_temp_file_for_download}")
-        except Exception as e:
-            logger.error(f"Error removing old temp file {current_temp_file_for_download}: {e}")
+    # Clean up previous temporary file for download, validating its path first
+    if current_temp_file_for_download:
+        resolved_temp_download_path = os.path.realpath(current_temp_file_for_download)
+        system_temp_dir = os.path.realpath(tempfile.gettempdir())
+        if not resolved_temp_download_path.startswith(system_temp_dir):
+            logger.error(f"Security alert: Temp download path '{current_temp_file_for_download}' resolves to '{resolved_temp_download_path}', which is outside the system temp directory '{system_temp_dir}'. Skipping cleanup of this path.")
+        # Proceed with cleanup only if path is valid and file exists
+        elif os.path.exists(resolved_temp_download_path):
+            try:
+                os.remove(resolved_temp_download_path)
+                logger.info(f"Removed old temp download file: {resolved_temp_download_path}")
+            except Exception as e:
+                logger.error(f"Error removing old temp file {resolved_temp_download_path}: {e}")
     
     blur_radius = int(blur_strength_slider_value)
     blurred_image_np = apply_gaussian_blur(background_np_rgba, final_mask_np_binary, blur_radius)
@@ -552,8 +578,7 @@ with gr.Blocks(theme='base', css=css, title="Blur Tool") as demo:
             )
             
             download_button = gr.DownloadButton("Download Blurred Image", visible=False, size="lg")
-            
-    # Compact privacy notice with much better visibility
+        
     gr.Markdown(
         "<div class='privacy-notice'>"
         "<strong>Privacy First:</strong> All processing happens locally on your machine. "

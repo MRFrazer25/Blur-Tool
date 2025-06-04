@@ -52,3 +52,7 @@ blurred_*.png
 *.zip
 *.tar.gz
 *.rar 
+
+# Gradio files
+*.gradio
+*.pem
