@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Model files and weights
+*.pth
+*.pt
+*.pkl
+*.h5
+*.onnx
+
+# PyTorch Hub cache
+torch/
+
+# Gradio temporary files
+gradio_cached_examples/
+flagged/
+
+# Application-specific temporary files
+blurred_*.png
+
+# Log files
+*.log
+
+# Large files
+*.zip
+*.tar.gz
+*.rar 

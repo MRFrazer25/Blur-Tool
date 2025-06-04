@@ -1,0 +1,7 @@
+gradio
+torch
+opencv-python
+numpy
+Pillow
+pandas
+ultralytics 
