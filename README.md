@@ -6,7 +6,7 @@ An intelligent image privacy application that combines manual drawing tools with
 
 * **Intelligent Drawing Interface:** Advanced brush tools with customizable size and color for precise area marking
 * **Enhanced AI Privacy Suggestions:** YOLOv11 object detection automatically identifies privacy-sensitive objects including people, vehicles, electronics, and personal items with superior accuracy
-* **Local Processing:** Complete privacy with 100% local image processing - no external data transmission
+* **Local Processing:** Complete privacy with 100% local image processing
 * **Real-Time Preview:** Instant blur application with adjustable strength control (1-101 intensity levels)
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
 * **Browser Compatibility Warnings:** Built-in detection and guidance for optimal browser experience
@@ -28,11 +28,9 @@ An intelligent image privacy application that combines manual drawing tools with
 
 ## Setup and Installation
 
-### Option 1: Hosted on Hugging Face Spaces
+### Option 1: Try it on Hugging Face Spaces
 
-You can use Blur Tool instantly in your browser—no installation required!
-
-**[Try it on Hugging Face Spaces →](https://huggingface.co/spaces/00matt/Blur-Tool)**
+**[Blur Tool](https://huggingface.co/spaces/00matt/Blur-Tool)**
 
 ### Option 2: Local Installation
 
