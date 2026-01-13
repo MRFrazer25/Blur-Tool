@@ -30,7 +30,7 @@ An intelligent image privacy application that combines manual drawing tools with
 
 ### Option 1: Try it on Hugging Face Spaces
 
-**[Blur Tool](https://huggingface.co/spaces/00matt/Blur-Tool)**
+**[Blur Tool](https://huggingface.co/spaces/mattrf/Blur-Tool)**
 
 ### Option 2: Local Installation
 
