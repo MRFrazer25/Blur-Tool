@@ -490,7 +490,7 @@ label {
 """
 
 # Build the Gradio interface using Blocks for layout flexibility.
-with gr.Blocks(theme='base', css=css, title="Blur Tool") as demo:
+with gr.Blocks(title="Blur Tool") as demo:
     gr.Markdown("# Blur Tool", elem_classes="main-title")
     gr.Markdown("*Draw to blur images then Download them. Powered by Gradio, OpenCV, and YOLOv11.*", elem_classes="subtitle")
     
@@ -573,8 +573,7 @@ with gr.Blocks(theme='base', css=css, title="Blur Tool") as demo:
             output_image = gr.Image(
                 label="Processed Image", 
                 interactive=False, 
-                type="pil",
-                show_download_button=False
+                type="pil"
             )
             
             download_button = gr.DownloadButton("Download Blurred Image", visible=False, size="lg")
@@ -610,4 +609,4 @@ with gr.Blocks(theme='base', css=css, title="Blur Tool") as demo:
 # When main is run, start the application
 if __name__ == "__main__":
     logger.info("Starting Gradio Blur Tool app...")
-    demo.launch(share=True)
+    demo.launch(share=True, theme='base', css=css)
