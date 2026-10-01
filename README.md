@@ -5,11 +5,11 @@ An intelligent image privacy application that combines manual drawing tools with
 ## Features
 
 * **Intelligent Drawing Interface:** Advanced brush tools with customizable size and color for precise area marking
-* **Enhanced AI Privacy Suggestions:** YOLOv11 object detection automatically identifies privacy-sensitive objects including people, vehicles, electronics, and personal items with superior accuracy
-* **Local Processing:** Complete privacy with 100% local image processing
+* **AI Privacy Suggestions:** YOLOv11 object detection automatically identifies privacy-sensitive objects including people, vehicles, electronics, and personal items
+* **Local Processing:** When run locally, images never leave your machine
 * **Real-Time Preview:** Instant blur application with adjustable strength control (1-101 intensity levels)
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
-* **Browser Compatibility Warnings:** Built-in detection and guidance for optimal browser experience
+* **Browser Compatibility Notice:** Built-in guidance for Firefox users
 * **Offline Capable:** AI suggestions work offline after initial model download
 
 ## Use Cases
@@ -22,7 +22,8 @@ An intelligent image privacy application that combines manual drawing tools with
 
 ## Requirements
 
-* Python 3.7+
+* Python 3.10+
+* Gradio 6+ (installed via `requirements.txt`)
 * Internet connection for AI model download (first use only)
 * Modern web browser with Canvas/WebGL support (Chrome recommended)
 
@@ -32,24 +33,26 @@ An intelligent image privacy application that combines manual drawing tools with
 
 **[Blur Tool](https://huggingface.co/spaces/mattrf/Blur-Tool)**
 
+The Space uses the same `app.py` and `requirements.txt` as this repository. Its README (with the Space settings header) is kept in [huggingface/README.md](huggingface/README.md).
+
 ### Option 2: Local Installation
 
 1. **Clone Repository:**
    ```bash
-   git clone [repository-url]
-   cd blur-tool
+   git clone https://github.com/MRFrazer25/Blur-Tool.git
+   cd Blur-Tool
    ```
 
 2. **Install Dependencies:**
    ```bash
-   pip install -r requirements.txt
+   pip install -U -r requirements.txt
    ```
 
 3. **Run Application:**
    ```bash
    python app.py
    ```
-   > **Note:** When you run the app locally, a public Gradio Live link will be generated (because `share=True` is set in the code). This link can be shared with others, but it is temporary and expires after one week. For a permanent public link, use Hugging Face Spaces. See [Gradio's sharing guide](https://www.gradio.app/guides/sharing-your-app) for details.
+   > **Note:** By default the app is only reachable from your own machine. To also generate a temporary public Gradio Live link (expires after one week), set the environment variable `GRADIO_SHARE=True` before running. Anyone with that link can use the app, and their images are processed on your machine. For a permanent public link, use Hugging Face Spaces. See [Gradio's sharing guide](https://www.gradio.app/guides/sharing-your-app) for details.
 
 4. **Access Interface:**
    Open your browser to `http://127.0.0.1:7860` and start processing images.
@@ -64,30 +67,36 @@ The application workflow:
 5. **Download** the processed image with privacy areas blurred
 
 **AI Privacy Detection** automatically identifies:
-- People and faces
+- People (whole-body boxes)
 - Vehicles (cars, buses, trucks, bicycles, motorcycles, trains, boats, airplanes)
 - Electronics (cell phones, laptops, TVs)
 - Personal items (handbags, backpacks, suitcases)
+
+The detector does not find faces, license plates, or text on their own. Mark those with the brush tool.
 
 Choose between manual precision drawing or AI-assisted detection based on your workflow needs.
 
 ## Troubleshooting
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and try different browser. Chrome provides best compatibility.
-* **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. The app includes automatic browser compatibility warnings. Try Chrome, Safari, or Edge for full functionality.
+* **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge for full functionality.
 * **AI Suggestions Unavailable:** Check internet connection for initial YOLOv11 model download. Manual drawing tools will still work offline.
-* **Application Won't Start:** Ensure Python 3.7+ and run `pip install -r requirements.txt`
+* **Application Won't Start:** Ensure Python 3.10+ and run `pip install -U -r requirements.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
+* **Image Too Large:** Images over 40 megapixels are rejected. Resize them before uploading
 * **Performance Issues:** Consider resizing large images before processing
 * **Blur Not Applied:** Ensure you've drawn areas or used AI suggestions before clicking "Apply Blur"
 
 ## Security & Privacy
 
-* **No Data Collection:** Images processed locally without external transmission
-* **Session-Only Processing:** No persistent storage of user images
+* **No Data Collection:** Images are processed only by the server running the app (your machine when run locally) and are never sent to a third-party service
+* **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app
+* **Session-Only Processing:** Blurred output files are deleted when a session ends, and Gradio's upload cache is cleared of files older than one hour
+* **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details)
 * **Local AI Model:** YOLOv11 runs entirely on your machine after download
-* **Privacy-First Design:** Complete control over your image data
-* **Secure File Handling:** Automatic cleanup of temporary files
-* **Input Validation:** Comprehensive security checks for uploaded files
+* **Private by Default:** No public share link is created unless you opt in with `GRADIO_SHARE=True`
+* **Upload Limits:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels
+* **Safe Errors:** Error messages shown in the app never include server file paths or internal details
+* **Path Validation:** File paths are checked to stay inside the temp/upload directories before any read or delete
 
 ## License
 

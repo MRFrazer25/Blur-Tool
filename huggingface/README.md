@@ -1,0 +1,72 @@
+---
+title: Blur Tool
+emoji: 👀
+colorFrom: green
+colorTo: blue
+sdk: gradio
+sdk_version: 6.29.0
+app_file: app.py
+pinned: false
+license: mit
+short_description: 'Blur images with freedom: Powered by Python, Gradio, YOLOv11'
+---
+
+# Blur Tool
+
+An intelligent image privacy application combining manual drawing tools with AI-powered object detection for precise area blurring.
+
+## Features
+
+* **Intelligent Drawing Interface:** Brush tools with customizable size and color for precise area marking
+* **AI Privacy Suggestions:** YOLOv11 object detection automatically identifies privacy-sensitive objects - people, vehicles, electronics, and personal items
+* **Hosted on Hugging Face Spaces:** Runs in your browser via the hosted Space
+* **Real-Time Preview:** Instant blur application with adjustable strength control (1–101 intensity levels)
+* **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
+* **Browser Compatibility Notice:** Built-in guidance for Firefox users
+
+## Use Cases
+
+* **Privacy Protection:** Blur faces, license plates, and personal identifiers in photos
+* **Content Moderation:** Prepare sensitive images for publication or sharing
+* **Social Media:** Quick privacy editing before uploading to platforms
+* **Professional Photography:** Artistic background blur and focus effects
+* **Document Redaction:** Hide sensitive information in screenshots and documents
+
+## How It Works
+
+1. **Navigate** to the Hugging Face Space URL in your browser.
+2. **Upload** your image through drag-and-drop or file picker (PNG/JPG supported).
+3. **Mark Areas** using manual drawing tools or AI-generated privacy suggestions.
+4. **Configure** blur strength using the intensity slider (1–101 range).
+5. **Apply** Gaussian blur processing to marked regions via the hosted service.
+6. **Download** the processed image directly from your browser with privacy areas blurred.
+
+**AI Privacy Detection** automatically identifies:
+- People (whole-body boxes)
+- Vehicles (cars, buses, trucks, bicycles, motorcycles, trains, boats, airplanes)
+- Electronics (cell phones, laptops, TVs)
+- Personal items (handbags, backpacks, suitcases)
+
+The detector does not find faces, license plates, or text on their own. Mark those with the brush tool.
+
+## Troubleshooting
+
+* **Image Upload Issues:** Verify file format (JPG/PNG) and refresh the page. Chrome generally provides the best compatibility.
+* **Image Too Large:** Uploads are limited to 25 MB and 40 megapixels. Resize larger images before uploading.
+* **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise.
+* **AI Suggestions Unavailable:** The YOLOv11 model is downloaded when the Space starts. If suggestions fail, wait a moment and try again, or mark areas manually.
+* **Blur Not Applied:** Ensure you have drawn areas or used AI suggestions before clicking "Apply Blur."
+* **Slow Response on Large Images:** For very high-resolution uploads, try resizing locally (for example, to 1920×1080) before uploading to improve responsiveness.
+
+## Security & Privacy
+
+* **Where Images Go:** Images are processed on this Hugging Face Space's server and are never sent to any other third-party service.
+* **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app.
+* **Temporary Storage Only:** Uploads and results are stored as temporary files on the Space. Blurred results are deleted when your session ends, and uploads are cleared from the cache after about an hour.
+* **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details).
+* **Upload Checks:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels.
+* **Safe Errors:** Error messages never include server file paths or internal details.
+
+To run the app on your own machine so images never leave it, see the GitHub repository.
+
+[GitHub](https://github.com/MRFrazer25/Blur-Tool)

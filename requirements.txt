@@ -1,7 +1,5 @@
 gradio
-torch
+ultralytics
 opencv-python
 numpy
 Pillow
-pandas
-ultralytics 
