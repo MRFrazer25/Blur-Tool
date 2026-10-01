@@ -5,7 +5,7 @@ An intelligent image privacy application that combines manual drawing tools with
 ## Features
 
 * **Intelligent Drawing Interface:** Advanced brush tools with customizable size and color for precise area marking
-* **AI Privacy Suggestions:** YOLO26 object detection automatically identifies privacy-sensitive objects including people, vehicles, electronics, and personal items
+* **AI Privacy Suggestions:** YOLO26 finds privacy-sensitive areas for you, as whole-object boxes, exact outlines, or faces only
 * **Local Processing:** When run locally, images never leave your machine
 * **Real-Time Preview:** Instant blur application with adjustable strength control (1-101 intensity levels)
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
@@ -66,13 +66,12 @@ The application workflow:
 4. **Apply** Gaussian blur processing to marked regions with OpenCV
 5. **Download** the processed image with privacy areas blurred
 
-**AI Privacy Detection** automatically identifies:
-- People (whole-body boxes)
-- Vehicles (cars, buses, trucks, bicycles, motorcycles, trains, boats, airplanes)
-- Electronics (cell phones, laptops, TVs)
-- Personal items (handbags, backpacks, suitcases)
+**AI Privacy Suggestions** has three detection modes:
+- **Whole objects:** boxes over people, vehicles (cars, buses, trucks, bicycles, motorcycles, trains, boats, airplanes), electronics (cell phones, laptops, TVs), and personal items (handbags, backpacks, suitcases)
+- **Exact outlines:** traces the exact shape of the same objects, so less of the background gets blurred
+- **Faces only:** finds people's faces from body keypoints (eyes, nose, ears) and marks just the head
 
-The detector does not find faces, license plates, or text on their own. Mark those with the brush tool.
+Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (in any mode) adds to the marks, and **Clear AI Marks** removes them. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
 
 Choose between manual precision drawing or AI-assisted detection based on your workflow needs.
 
@@ -80,7 +79,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and try different browser. Chrome provides best compatibility.
 * **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge for full functionality.
-* **AI Suggestions Unavailable:** Check internet connection for initial YOLO26 model download. Manual drawing tools will still work offline.
+* **AI Suggestions Unavailable:** Check internet connection for initial YOLO26 model downloads (three small models, about 20 MB total). Manual drawing tools will still work offline.
 * **Application Won't Start:** Ensure Python 3.10+ and run `pip install -U -r requirements.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
 * **Image Too Large:** Images over 40 megapixels are rejected. Resize them before uploading
 * **Performance Issues:** Consider resizing large images before processing
@@ -92,7 +91,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 * **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app
 * **Session-Only Processing:** Blurred output files are deleted when a session ends, and Gradio's upload cache is cleared of files older than one hour
 * **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details)
-* **Local AI Model:** YOLO26 runs entirely on your machine after download
+* **Local AI Models:** YOLO26 runs entirely on your machine after download
 * **Private by Default:** No public share link is created unless you opt in with `GRADIO_SHARE=True`
 * **Upload Limits:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels
 * **Safe Errors:** Error messages shown in the app never include server file paths or internal details

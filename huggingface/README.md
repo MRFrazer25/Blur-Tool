@@ -18,7 +18,7 @@ An intelligent image privacy application combining manual drawing tools with AI-
 ## Features
 
 * **Intelligent Drawing Interface:** Brush tools with customizable size and color for precise area marking
-* **AI Privacy Suggestions:** YOLO26 object detection automatically identifies privacy-sensitive objects - people, vehicles, electronics, and personal items
+* **AI Privacy Suggestions:** YOLO26 finds privacy-sensitive areas for you, as whole-object boxes, exact outlines, or faces only
 * **Hosted on Hugging Face Spaces:** Runs in your browser via the hosted Space
 * **Real-Time Preview:** Instant blur application with adjustable strength control (1–101 intensity levels)
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
@@ -41,20 +41,19 @@ An intelligent image privacy application combining manual drawing tools with AI-
 5. **Apply** Gaussian blur processing to marked regions via the hosted service.
 6. **Download** the processed image directly from your browser with privacy areas blurred.
 
-**AI Privacy Detection** automatically identifies:
-- People (whole-body boxes)
-- Vehicles (cars, buses, trucks, bicycles, motorcycles, trains, boats, airplanes)
-- Electronics (cell phones, laptops, TVs)
-- Personal items (handbags, backpacks, suitcases)
+**AI Privacy Suggestions** has three detection modes:
+- **Whole objects:** boxes over people, vehicles (cars, buses, trucks, bicycles, motorcycles, trains, boats, airplanes), electronics (cell phones, laptops, TVs), and personal items (handbags, backpacks, suitcases)
+- **Exact outlines:** traces the exact shape of the same objects, so less of the background gets blurred
+- **Faces only:** finds people's faces from body keypoints (eyes, nose, ears) and marks just the head
 
-The detector does not find faces, license plates, or text on their own. Mark those with the brush tool.
+Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (in any mode) adds to the marks, and **Clear AI Marks** removes them. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
 
 ## Troubleshooting
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and refresh the page. Chrome generally provides the best compatibility.
 * **Image Too Large:** Uploads are limited to 25 MB and 40 megapixels. Resize larger images before uploading.
 * **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise.
-* **AI Suggestions Unavailable:** The YOLO26 model is downloaded when the Space starts. If suggestions fail, wait a moment and try again, or mark areas manually.
+* **AI Suggestions Unavailable:** The YOLO26 models (about 20 MB total) are downloaded when the Space starts. If suggestions fail, wait a moment and try again, or mark areas manually.
 * **Blur Not Applied:** Ensure you have drawn areas or used AI suggestions before clicking "Apply Blur."
 * **Slow Response on Large Images:** For very high-resolution uploads, try resizing locally (for example, to 1920×1080) before uploading to improve responsiveness.
 

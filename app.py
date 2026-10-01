@@ -54,16 +54,27 @@ if os.name == "nt":
     except Exception as e:
         logger.warning(f"Could not apply Gradio upload workaround: {e}")
 
-# Load YOLO26 model when the application starts.
-yolo_model = None
-try:
-    logger.info("Attempting to load YOLO26 model...")
-    # Download model from Ultralytics if not cached (requires internet on first run)
-    yolo_model = YOLO("yolo26n.pt")  # Using nano version for better speed/efficiency balance
-    logger.info("YOLO26 model loaded successfully.")
-except Exception as e:
-    logger.error(f"Failed to load YOLO26 model: {e}. The 'Privacy Suggestions' feature will be unavailable.", exc_info=True)
-    # Application continues to function without AI features if model loading fails
+# Privacy Suggestions detection modes and the YOLO26 model each one uses
+# (nano versions for the best speed/efficiency balance).
+MODE_OBJECTS = "Whole objects"
+MODE_OUTLINES = "Exact outlines"
+MODE_FACES = "Faces only"
+DETECTION_MODELS = {
+    MODE_OBJECTS: "yolo26n.pt",        # Bounding boxes
+    MODE_OUTLINES: "yolo26n-seg.pt",   # Segmentation masks (exact shapes)
+    MODE_FACES: "yolo26n-pose.pt",     # Body keypoints, used to locate faces
+}
+
+# Load the models when the application starts. Each downloads from Ultralytics on first run
+# (requires internet once). If one fails, only that mode is unavailable.
+yolo_models = {}
+for mode, weights in DETECTION_MODELS.items():
+    try:
+        logger.info(f"Attempting to load {weights}...")
+        yolo_models[mode] = YOLO(weights)
+        logger.info(f"{weights} loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load {weights}: {e}. The '{mode}' suggestion mode will be unavailable.", exc_info=True)
 
 # Object classes (COCO) suggested for blurring, and the minimum detection confidence
 PRIVACY_TARGET_CLASSES = {
@@ -71,6 +82,12 @@ PRIVACY_TARGET_CLASSES = {
     'cell phone', 'laptop', 'tv', 'handbag', 'backpack', 'suitcase'
 }
 SUGGESTION_CONFIDENCE = 0.4
+SUGGESTION_FILL = (255, 0, 0, 100)  # Semi-transparent red (~40% opacity)
+
+# Pose keypoint indices (COCO order): nose, eyes and ears locate the face; shoulders give scale
+FACE_KEYPOINTS = range(0, 5)
+LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
+KEYPOINT_CONFIDENCE = 0.5
 
 # Upload limits: only real PNG/JPEG files are decoded, up to 40 megapixels
 ALLOWED_IMAGE_FORMATS = ["PNG", "JPEG"]
@@ -112,6 +129,24 @@ def remove_temp_file(path):
             logger.error(f"Error removing old temp file {resolved_path}: {e}")
 
 # Core Functions
+def layers_to_mask(layers, size):
+    """Combines ImageEditor drawing layers into a binary mask (1 = marked) of the given (width, height).
+    Any pixel with non-zero alpha on any layer counts as marked."""
+    mask = np.zeros((size[1], size[0]), dtype=np.uint8)
+    for layer in layers or []:
+        if isinstance(layer, Image.Image):
+            layer_alpha = layer.convert("RGBA").split()[-1]
+            if layer_alpha.size != size:
+                layer_alpha = layer_alpha.resize(size, Image.NEAREST)
+            mask |= (np.array(layer_alpha) > 0).astype(np.uint8)
+    return mask
+
+def render_marks_preview(base_image, marks):
+    """Returns the image with marked areas tinted semi-transparent red, for display in the editor."""
+    overlay = np.zeros((base_image.height, base_image.width, 4), dtype=np.uint8)
+    overlay[marks.astype(bool)] = SUGGESTION_FILL
+    return Image.alpha_composite(base_image.convert("RGBA"), Image.fromarray(overlay, "RGBA"))
+
 def apply_gaussian_blur(image_np_rgba, mask_np_binary, blur_radius_odd):
     """
     Applies Gaussian blur to an RGBA image in regions specified by a binary mask.
@@ -150,7 +185,7 @@ def apply_gaussian_blur(image_np_rgba, mask_np_binary, blur_radius_odd):
 def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
     """Handles new file uploads, prepares image for editor, and cleans up old temp files.
     Also returns the full-quality original, which is what gets blurred (the editor only
-    holds a compressed preview copy)."""
+    holds a compressed preview copy), and resets any saved Privacy Suggestions marks."""
     if uploaded_file_path:
         try:
             # Validate uploaded_file_path
@@ -164,6 +199,8 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                     gr.DownloadButton(visible=False),
                     None,
                     current_temp_file_for_download,
+                    gr.skip(),
+                    gr.skip(),
                     gr.skip()
                 )
             
@@ -177,6 +214,8 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                         gr.DownloadButton(visible=False),
                         None,
                         current_temp_file_for_download,
+                        gr.skip(),
+                        gr.skip(),
                         gr.skip()
                     )
                 # Apply camera rotation so phone photos are not shown sideways
@@ -192,7 +231,9 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 gr.DownloadButton(visible=False), 
                 None, 
                 None,
-                img
+                img,
+                None,  # New image: clear any saved marks
+                gr.update(value=None, visible=False)
             )
         except (UnidentifiedImageError, Image.DecompressionBombError) as e:
             logger.warning(f"Rejected uploaded file: {e}")
@@ -202,6 +243,8 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 gr.DownloadButton(visible=False),
                 None,
                 current_temp_file_for_download,
+                gr.skip(),
+                gr.skip(),
                 gr.skip()
             )
         except Exception as e:
@@ -213,6 +256,8 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 gr.DownloadButton(visible=False),
                 None,
                 current_temp_file_for_download,
+                gr.skip(),
+                gr.skip(),
                 gr.skip()
             )
     
@@ -226,12 +271,15 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
         gr.DownloadButton(visible=False),
         None,
         None,
-        gr.skip()  # Keep the original in sync with the editor, which is also left as-is
+        gr.skip(),  # Keep the original, marks and preview in sync with the editor, which is also left as-is
+        gr.skip(),
+        gr.skip()
     )
 
-def handle_blur_click(editor_data, original_image, current_temp_file_for_download, blur_strength_slider_value):
-    """Applies blur to areas drawn by user in ImageEditor, prepares for download.
-    Blurs the full-quality original upload when available, using the editor only for the marked areas."""
+def handle_blur_click(editor_data, original_image, saved_marks, current_temp_file_for_download, blur_strength_slider_value):
+    """Applies blur to the marked areas (editor brush strokes plus saved Privacy Suggestions marks)
+    and prepares the result for download. Blurs the full-quality original upload when available,
+    since the editor only holds a compressed copy."""
     if not editor_data or not editor_data.get('background'):
         return (
             None, 
@@ -247,35 +295,17 @@ def handle_blur_click(editor_data, original_image, current_temp_file_for_downloa
         logger.error("Background is not a PIL image. This indicates an issue with ImageEditor's output type.")
         return None, gr.HTML("Internal error: Background image format incorrect.", elem_classes="status-error"), gr.DownloadButton(visible=False), current_temp_file_for_download
 
-    # The editor's copy is compressed for display, so blur the original upload instead
+    # The editor's copy is compressed, so blur the original upload instead
     if isinstance(original_image, Image.Image) and original_image.size == background_pil.size:
         source_pil = original_image
     else:
         source_pil = background_pil
     background_np_rgba = np.array(source_pil.convert("RGBA"))
 
-    if not layers_pil: # No drawing layers found
-        return (
-            None,
-            gr.HTML("No areas marked for blurring. Use the brush tools or AI suggestions first.", elem_classes="status-info"),
-            gr.DownloadButton(visible=False),
-            current_temp_file_for_download
-        )
-
-    # Combine all drawing layers into a single binary mask: any pixel with
-    # non-zero alpha on any layer is marked. AI suggestion boxes are drawn
-    # semi-transparent, so they must count as marked too.
-    combined_alpha_np = np.zeros((background_pil.height, background_pil.width), dtype=np.uint8)
-    for layer_pil_rgba in layers_pil:
-        if layer_pil_rgba and isinstance(layer_pil_rgba, Image.Image):
-            # Ensure layer is RGBA to get alpha, and aligned with the background
-            layer_alpha = layer_pil_rgba.convert("RGBA").split()[-1]
-            if layer_alpha.size != background_pil.size:
-                layer_alpha = layer_alpha.resize(background_pil.size, Image.NEAREST)
-            combined_alpha_np = np.maximum(combined_alpha_np, np.array(layer_alpha))
-
-    # Threshold to binary mask: 1 where drawn, 0 otherwise
-    final_mask_np_binary = (combined_alpha_np > 0).astype(np.uint8)
+    # Marked areas = brush strokes in the editor + saved marks from Privacy Suggestions
+    final_mask_np_binary = layers_to_mask(layers_pil, source_pil.size)
+    if isinstance(saved_marks, np.ndarray) and saved_marks.shape == final_mask_np_binary.shape:
+        final_mask_np_binary |= saved_marks
 
     if np.sum(final_mask_np_binary) == 0: # Check if mask is empty
          return (
@@ -319,102 +349,164 @@ def handle_blur_click(editor_data, original_image, current_temp_file_for_downloa
             None # Reset temp file state on error
         )
 
-def handle_suggest_click(editor_data):
-    """Uses YOLO26 to detect objects and adds them as a new layer in ImageEditor."""
-    if not yolo_model:
+def _privacy_detections(result):
+    """Yields the indices of detections that are privacy targets with enough confidence."""
+    if result.boxes is None:
+        return
+    for i, (class_id, confidence) in enumerate(zip(result.boxes.cls.tolist(), result.boxes.conf.tolist())):
+        if result.names[int(class_id)] in PRIVACY_TARGET_CLASSES and confidence >= SUGGESTION_CONFIDENCE:
+            yield i
+
+def draw_object_boxes(draw, result):
+    """Draws a filled rectangle over each detected privacy object. Returns how many were drawn."""
+    count = 0
+    for i in _privacy_detections(result):
+        x1, y1, x2, y2 = result.boxes.xyxy[i].tolist()
+        draw.rectangle([int(x1), int(y1), int(x2), int(y2)], fill=SUGGESTION_FILL)
+        count += 1
+    return count
+
+def draw_object_outlines(draw, result, image_size):
+    """Fills the exact shape of each detected privacy object. Returns how many were drawn."""
+    if result.masks is None:
+        return 0
+    # Grow each shape slightly so the blur also covers the object's edges
+    edge_px = max(2, round(max(image_size) / 250))
+    count = 0
+    for i in _privacy_detections(result):
+        polygon = [tuple(point) for point in result.masks.xy[i].tolist()]
+        if len(polygon) >= 3:
+            draw.polygon(polygon, fill=SUGGESTION_FILL, outline=SUGGESTION_FILL, width=edge_px)
+            count += 1
+    return count
+
+def draw_faces(draw, result):
+    """Draws an oval over each face, located from the pose model's face keypoints
+    (nose, eyes, ears). Returns how many were drawn."""
+    if result.keypoints is None or result.boxes is None:
+        return 0
+    count = 0
+    for i, confidence in enumerate(result.boxes.conf.tolist()):
+        if confidence < SUGGESTION_CONFIDENCE:
+            continue
+        keypoints = result.keypoints.data[i].tolist()
+        face_points = [(x, y) for x, y, c in (keypoints[k] for k in FACE_KEYPOINTS) if c >= KEYPOINT_CONFIDENCE]
+        if len(face_points) < 2:  # Face not visible (e.g. person facing away)
+            continue
+        xs, ys = [p[0] for p in face_points], [p[1] for p in face_points]
+        center_x, center_y = sum(xs) / len(xs), sum(ys) / len(ys)
+        # Estimate head size from the spread of face points, and from shoulder width when
+        # visible (eyes alone sit close together, so they understate the head size)
+        half_width = max(max(xs) - min(xs), max(ys) - min(ys)) * 0.9
+        (lsx, lsy, lsc), (rsx, rsy, rsc) = keypoints[LEFT_SHOULDER], keypoints[RIGHT_SHOULDER]
+        if lsc >= KEYPOINT_CONFIDENCE and rsc >= KEYPOINT_CONFIDENCE:
+            half_width = max(half_width, ((lsx - rsx) ** 2 + (lsy - rsy) ** 2) ** 0.5 * 0.34)
+        half_width = max(half_width, 8)
+        half_height = half_width * 1.4  # Heads are taller than wide; covers hair and chin
+        draw.ellipse([center_x - half_width, center_y - half_height, center_x + half_width, center_y + half_height],
+                     fill=SUGGESTION_FILL)
+        count += 1
+    return count
+
+SUGGESTION_MESSAGES = {
+    MODE_OBJECTS: ("Found {n} object(s)! Red boxes in the preview show detected people, vehicles, and other items that will be blurred.",
+                   "No common privacy objects (people, cars, etc.) detected with high confidence. Try manual drawing instead."),
+    MODE_OUTLINES: ("Found {n} object(s)! Red shapes in the preview outline detected people, vehicles, and other items that will be blurred.",
+                    "No common privacy objects (people, cars, etc.) detected with high confidence. Try manual drawing instead."),
+    MODE_FACES: ("Found {n} face(s)! Red ovals in the preview mark them for blurring. Very small or turned-away faces can be missed, so check and add any with the brush.",
+                 "No faces detected. Faces that are very small, hidden, or turned away can be missed. Try manual drawing instead."),
+}
+
+def handle_suggest_click(editor_data, original_image, saved_marks, detection_mode=MODE_OBJECTS):
+    """Uses YOLO26 to detect privacy targets (whole objects, exact outlines, or faces).
+
+    The detections are kept server-side as a mask and shown in a separate preview image; Apply
+    Blur combines them with the brush strokes in the editor. The editor itself is never updated
+    here: pushing new content into the Gradio 6 editor while it is still syncing recent brush
+    strokes can leave it stuck loading.
+
+    Returns (status, download button, marks, preview image update)."""
+    model = yolo_models.get(detection_mode)
+    if model is None:
         return (
-            editor_data, # Return original data, no changes
-            gr.HTML("Privacy Suggestions unavailable: YOLO26 model not loaded.", elem_classes="status-error"),
-            gr.DownloadButton(visible=False) # Ensure download button is hidden
+            gr.HTML("Privacy Suggestions unavailable: the model for this detection mode is not loaded.", elem_classes="status-error"),
+            gr.DownloadButton(visible=False), # Ensure download button is hidden
+            gr.skip(),
+            gr.skip()
         )
-        
+
     if not editor_data or not editor_data.get('background'):
         return (
-            editor_data, 
             gr.HTML("Please upload an image first to use Privacy Suggestions.", elem_classes="status-error"),
-            gr.DownloadButton(visible=False)
+            gr.DownloadButton(visible=False),
+            gr.skip(),
+            gr.skip()
         )
 
     background_pil = editor_data['background']
     if not isinstance(background_pil, Image.Image):
-         logger.error("Background for suggestion is not a PIL image.")
-         return editor_data, gr.HTML("Internal error: Image format incorrect for Privacy Suggestions.", elem_classes="status-error"), gr.DownloadButton(visible=False)
+        logger.error("Background for suggestion is not a PIL image.")
+        return gr.HTML("Internal error: Image format incorrect for Privacy Suggestions.", elem_classes="status-error"), gr.DownloadButton(visible=False), gr.skip(), gr.skip()
 
-    # YOLO typically works best with RGB images
-    background_for_yolo = background_pil.convert("RGB")
+    # Detect on the clean original (the editor's copy may already show red marks)
+    if isinstance(original_image, Image.Image) and original_image.size == background_pil.size:
+        base_pil = original_image
+    else:
+        base_pil = background_pil
 
     try:
-        results = yolo_model(background_for_yolo, conf=SUGGESTION_CONFIDENCE, verbose=False)
+        # YOLO typically works best with RGB images
+        result = model(base_pil.convert("RGB"), conf=SUGGESTION_CONFIDENCE, verbose=False)[0]
 
-        # Create a new transparent layer for suggestions
-        suggestion_layer_pil = Image.new("RGBA", background_pil.size, (0, 0, 0, 0))
+        # Draw the detections on a transparent layer, then turn it into a mask
+        suggestion_layer_pil = Image.new("RGBA", base_pil.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(suggestion_layer_pil)
 
-        suggestion_made = False
-
-        # Process YOLO26 results
-        for result in results:
-            boxes = result.boxes
-            if boxes is not None:
-                for box in boxes:
-                    # Get class name and confidence
-                    class_id = int(box.cls[0])
-                    class_name = result.names[class_id]
-                    confidence = float(box.conf[0])
-                    
-                    if class_name in PRIVACY_TARGET_CLASSES and confidence >= SUGGESTION_CONFIDENCE:
-                        # Get bounding box coordinates
-                        x1, y1, x2, y2 = box.xyxy[0].tolist()
-                        xmin, ymin, xmax, ymax = int(x1), int(y1), int(x2), int(y2)
-                        
-                        # Draw semi-transparent red rectangle for suggestion
-                        draw.rectangle([xmin, ymin, xmax, ymax], fill=(255, 0, 0, 100)) # RGBA: Red, ~40% opacity
-                        suggestion_made = True
-        
-        # Merge existing drawings and the new suggestion boxes into a single layer.
-        # Sending several layers back makes the Gradio 6 editor hang while loading.
-        current_layers = editor_data.get('layers') or []
-        merged_layer_pil = Image.new("RGBA", background_pil.size, (0, 0, 0, 0))
-        for layer_pil in current_layers:
-            if isinstance(layer_pil, Image.Image):
-                layer_rgba = layer_pil.convert("RGBA")
-                if layer_rgba.size != background_pil.size:
-                    layer_rgba = layer_rgba.resize(background_pil.size, Image.NEAREST)
-                merged_layer_pil = Image.alpha_composite(merged_layer_pil, layer_rgba)
-        if suggestion_made:
-            merged_layer_pil = Image.alpha_composite(merged_layer_pil, suggestion_layer_pil)
-        updated_layers = [merged_layer_pil] if (current_layers or suggestion_made) else []
-
-        # Update the ImageEditor value with the new layer
-        composite_pil = background_pil.convert("RGBA")
-        for layer_pil in updated_layers:
-            composite_pil = Image.alpha_composite(composite_pil, layer_pil)
-        updated_editor_value = {
-            "background": background_pil,
-            "layers": updated_layers,
-            "composite": composite_pil
-        }
-        
-        if suggestion_made:
-            status_msg = "Objects found! Red boxes show detected people, vehicles, and other items you might want to blur for privacy."
-            status_class = "status-success"
+        if detection_mode == MODE_OUTLINES:
+            found_count = draw_object_outlines(draw, result, base_pil.size)
+        elif detection_mode == MODE_FACES:
+            found_count = draw_faces(draw, result)
         else:
-            status_msg = "No common privacy objects (people, cars, etc.) detected with high confidence. Try manual drawing instead."
-            status_class = "status-info"
-            
+            found_count = draw_object_boxes(draw, result)
+
+        found_msg, none_msg = SUGGESTION_MESSAGES.get(detection_mode, SUGGESTION_MESSAGES[MODE_OBJECTS])
+        if found_count == 0:
+            # Nothing new: leave the saved marks and preview as they are
+            return (
+                gr.HTML(none_msg, elem_classes="status-info"),
+                gr.DownloadButton(visible=False),
+                gr.skip(),
+                gr.skip()
+            )
+
+        # Saved AI marks = previous AI marks + new detections (brush strokes stay in the editor)
+        marks = layers_to_mask([suggestion_layer_pil], base_pil.size)
+        if isinstance(saved_marks, np.ndarray) and saved_marks.shape == marks.shape:
+            marks |= saved_marks
+
         return (
-            gr.update(value=updated_editor_value), 
-            gr.HTML(status_msg, elem_classes=status_class),
-            gr.DownloadButton(visible=False)
+            gr.HTML(found_msg.format(n=found_count), elem_classes="status-success"),
+            gr.DownloadButton(visible=False),
+            marks,
+            gr.update(value=render_marks_preview(base_pil, marks), visible=True)
         )
 
     except Exception as e:
         logger.error(f"Error during AI suggestion generation: {e}", exc_info=True)
         return (
-            editor_data, 
             gr.HTML("Error with Privacy Suggestions. Please try again or mark areas manually.", elem_classes="status-error"),
-            gr.DownloadButton(visible=False)
+            gr.DownloadButton(visible=False),
+            gr.skip(),
+            gr.skip()
         )
+
+def handle_clear_marks():
+    """Removes the saved Privacy Suggestions marks (brush strokes are managed in the editor itself)."""
+    return (
+        gr.update(value=None, visible=False),
+        gr.HTML("AI marks cleared. Brush strokes stay in the editor - use its eraser or undo to remove them.", elem_classes="status-info"),
+        None
+    )
 
 # Custom CSS for a cool looking dark theme
 css = """
@@ -536,15 +628,17 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         1. **Upload**: Click 'Upload Image' or drag & drop your JPG/PNG file
         2. **Mark Areas**: Choose your method:
            - **Manual**: Use brush tools to draw on areas you want blurred
-           - **AI Assist**: Click 'Privacy Suggestions' - uses YOLO26 AI to automatically detect people, cars, and other privacy-sensitive objects
+           - **AI Assist**: Pick what to detect, then click 'Privacy Suggestions' - uses YOLO26 AI to find privacy-sensitive areas automatically
         3. **Apply**: Adjust blur strength and click 'Apply Blur'
         4. **Download**: Save your processed image
         
         **Pro Tips:**
         - Use red brush for clear visibility on most images
-        - Privacy Suggestions detects common privacy targets: people, vehicles, electronics, bags
-        - It does not detect faces or license plates on their own - mark those with the brush
-        - AI suggestions appear as red overlays that you can edit or use as-is
+        - **Whole objects** marks people, vehicles, electronics and bags with boxes
+        - **Exact outlines** traces the shape of those objects, so less of the background gets blurred
+        - **Faces only** marks just people's faces - very small or turned-away faces can be missed
+        - License plates and text are not detected - mark those with the brush
+        - AI suggestions appear in a preview below the editor - add more areas with the brush, or click 'Clear AI Marks' to start over
         - Higher blur values create stronger effects
         - Images are processed by the server running this app (your own machine when run locally)
         """)
@@ -557,6 +651,8 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     temp_file_path_for_download_state = gr.State(None, delete_callback=remove_temp_file)
     # Full-quality copy of the uploaded image (kept server-side, freed when the session ends).
     original_image_state = gr.State(None)
+    # Areas marked by Privacy Suggestions (plus brush strokes made before it), as a 0/1 mask.
+    marks_state = gr.State(None)
 
     with gr.Row():
         with gr.Column(scale=3): # Main interactive column
@@ -582,6 +678,14 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
                 eraser=gr.Eraser(default_size=25),
                 canvas_size=(800, 600)
             )
+
+            marks_preview = gr.Image(
+                label="Privacy Suggestions Preview (red areas will be blurred along with your brush strokes)",
+                interactive=False,
+                type="pil",
+                height=420,
+                visible=False
+            )
             
         with gr.Column(scale=2): # Actions and results column
             gr.HTML("<div class='section-header'>Controls</div>")
@@ -594,9 +698,16 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
                 label="Blur Strength"
             )
 
+            detection_mode_radio = gr.Radio(
+                choices=list(DETECTION_MODELS),
+                value=MODE_OBJECTS,
+                label="Privacy Suggestions Detect"
+            )
+
             with gr.Row():
                 suggest_button = gr.Button("Privacy Suggestions", size="sm", variant="primary")
                 blur_button = gr.Button("Apply Blur", variant="primary", size="sm")
+            clear_marks_button = gr.Button("Clear AI Marks", size="sm", variant="secondary")
 
             gr.HTML("<div class='section-header'>Results</div>")
             
@@ -621,26 +732,33 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     file_uploader.upload(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview]
     )
     file_uploader.clear(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview]
     )
     
     # Blur button actions
     blur_button.click(
         fn=handle_blur_click,
-        inputs=[image_editor, original_image_state, temp_file_path_for_download_state, blur_strength_slider],
+        inputs=[image_editor, original_image_state, marks_state, temp_file_path_for_download_state, blur_strength_slider],
         outputs=[output_image, status_html, download_button, temp_file_path_for_download_state]
     )
     
     # Suggest button actions
     suggest_button.click(
         fn=handle_suggest_click,
-        inputs=[image_editor],
-        outputs=[image_editor, status_html, download_button]
+        inputs=[image_editor, original_image_state, marks_state, detection_mode_radio],
+        outputs=[status_html, download_button, marks_state, marks_preview]
+    )
+
+    # Clear marks button actions
+    clear_marks_button.click(
+        fn=handle_clear_marks,
+        inputs=[],
+        outputs=[marks_preview, status_html, marks_state]
     )
 
 # When main is run, start the application
