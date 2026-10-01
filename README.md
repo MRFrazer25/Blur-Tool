@@ -1,11 +1,11 @@
 # Blur Tool
 
-An intelligent image privacy application that combines manual drawing tools with AI-powered object detection for precise area blurring. Built with Gradio ImageEditor and YOLOv11 via Ultralytics, it processes images locally using OpenCV with configurable Gaussian blur kernels while providing both manual control and automated privacy suggestions.
+An intelligent image privacy application that combines manual drawing tools with AI-powered object detection for precise area blurring. Built with Gradio ImageEditor and YOLO26 via Ultralytics, it processes images locally using OpenCV with configurable Gaussian blur kernels while providing both manual control and automated privacy suggestions.
 
 ## Features
 
 * **Intelligent Drawing Interface:** Advanced brush tools with customizable size and color for precise area marking
-* **AI Privacy Suggestions:** YOLOv11 object detection automatically identifies privacy-sensitive objects including people, vehicles, electronics, and personal items
+* **AI Privacy Suggestions:** YOLO26 object detection automatically identifies privacy-sensitive objects including people, vehicles, electronics, and personal items
 * **Local Processing:** When run locally, images never leave your machine
 * **Real-Time Preview:** Instant blur application with adjustable strength control (1-101 intensity levels)
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
@@ -80,7 +80,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and try different browser. Chrome provides best compatibility.
 * **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge for full functionality.
-* **AI Suggestions Unavailable:** Check internet connection for initial YOLOv11 model download. Manual drawing tools will still work offline.
+* **AI Suggestions Unavailable:** Check internet connection for initial YOLO26 model download. Manual drawing tools will still work offline.
 * **Application Won't Start:** Ensure Python 3.10+ and run `pip install -U -r requirements.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
 * **Image Too Large:** Images over 40 megapixels are rejected. Resize them before uploading
 * **Performance Issues:** Consider resizing large images before processing
@@ -92,7 +92,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 * **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app
 * **Session-Only Processing:** Blurred output files are deleted when a session ends, and Gradio's upload cache is cleared of files older than one hour
 * **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details)
-* **Local AI Model:** YOLOv11 runs entirely on your machine after download
+* **Local AI Model:** YOLO26 runs entirely on your machine after download
 * **Private by Default:** No public share link is created unless you opt in with `GRADIO_SHARE=True`
 * **Upload Limits:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels
 * **Safe Errors:** Error messages shown in the app never include server file paths or internal details

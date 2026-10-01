@@ -8,7 +8,7 @@ sdk_version: 6.29.0
 app_file: app.py
 pinned: false
 license: mit
-short_description: 'Blur images with freedom: Powered by Python, Gradio, YOLOv11'
+short_description: 'Blur images with freedom: Powered by Python, Gradio, YOLO26'
 ---
 
 # Blur Tool
@@ -18,7 +18,7 @@ An intelligent image privacy application combining manual drawing tools with AI-
 ## Features
 
 * **Intelligent Drawing Interface:** Brush tools with customizable size and color for precise area marking
-* **AI Privacy Suggestions:** YOLOv11 object detection automatically identifies privacy-sensitive objects - people, vehicles, electronics, and personal items
+* **AI Privacy Suggestions:** YOLO26 object detection automatically identifies privacy-sensitive objects - people, vehicles, electronics, and personal items
 * **Hosted on Hugging Face Spaces:** Runs in your browser via the hosted Space
 * **Real-Time Preview:** Instant blur application with adjustable strength control (1–101 intensity levels)
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
@@ -54,7 +54,7 @@ The detector does not find faces, license plates, or text on their own. Mark tho
 * **Image Upload Issues:** Verify file format (JPG/PNG) and refresh the page. Chrome generally provides the best compatibility.
 * **Image Too Large:** Uploads are limited to 25 MB and 40 megapixels. Resize larger images before uploading.
 * **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise.
-* **AI Suggestions Unavailable:** The YOLOv11 model is downloaded when the Space starts. If suggestions fail, wait a moment and try again, or mark areas manually.
+* **AI Suggestions Unavailable:** The YOLO26 model is downloaded when the Space starts. If suggestions fail, wait a moment and try again, or mark areas manually.
 * **Blur Not Applied:** Ensure you have drawn areas or used AI suggestions before clicking "Apply Blur."
 * **Slow Response on Large Images:** For very high-resolution uploads, try resizing locally (for example, to 1920×1080) before uploading to improve responsiveness.
 

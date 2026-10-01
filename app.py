@@ -5,7 +5,14 @@ from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 import os
 import tempfile
 import logging
+
+# Never let Ultralytics pip-install packages at runtime (e.g. when an upload fails to decode).
+os.environ["YOLO_AUTOINSTALL"] = "False"
+# Ultralytics replaces PIL's Image.open on import with a version that tries to install an
+# extra plugin whenever a file fails to open. Keep the original and restore it below.
+_pil_image_open = Image.open
 from ultralytics import YOLO
+Image.open = _pil_image_open
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,15 +26,43 @@ try:
 except Exception as e:
     logger.warning(f"Could not disable Ultralytics analytics: {e}")
 
-# Load YOLOv11 model when the application starts.
+# Windows-only workaround for a Gradio upload race. Uploads are cached in a folder named
+# after the file's content hash. When the image editor re-uploads an identical file,
+# Windows refuses to rename over the existing copy, so Gradio rewrites it in a background
+# task after the request returns - and the next event can read it half-written ("cannot
+# identify image file"). An existing file at that path already has identical content,
+# so the rewrite is skipped and the duplicate temp file is just removed.
+if os.name == "nt":
+    try:
+        import gradio.routes as gradio_routes
+        _gradio_move_uploads = gradio_routes.move_uploaded_files_to_cache
+
+        def _move_uploads_skip_existing(files, destinations):
+            new_files, new_destinations = [], []
+            for file, dest in zip(files, destinations):
+                if os.path.exists(dest):
+                    try:
+                        os.remove(file)
+                    except OSError:
+                        pass
+                else:
+                    new_files.append(file)
+                    new_destinations.append(dest)
+            _gradio_move_uploads(new_files, new_destinations)
+
+        gradio_routes.move_uploaded_files_to_cache = _move_uploads_skip_existing
+    except Exception as e:
+        logger.warning(f"Could not apply Gradio upload workaround: {e}")
+
+# Load YOLO26 model when the application starts.
 yolo_model = None
 try:
-    logger.info("Attempting to load YOLOv11 model...")
+    logger.info("Attempting to load YOLO26 model...")
     # Download model from Ultralytics if not cached (requires internet on first run)
-    yolo_model = YOLO("yolo11n.pt")  # Using nano version for better speed/efficiency balance
-    logger.info("YOLOv11 model loaded successfully.")
+    yolo_model = YOLO("yolo26n.pt")  # Using nano version for better speed/efficiency balance
+    logger.info("YOLO26 model loaded successfully.")
 except Exception as e:
-    logger.error(f"Failed to load YOLOv11 model: {e}. The 'Privacy Suggestions' feature will be unavailable.", exc_info=True)
+    logger.error(f"Failed to load YOLO26 model: {e}. The 'Privacy Suggestions' feature will be unavailable.", exc_info=True)
     # Application continues to function without AI features if model loading fails
 
 # Object classes (COCO) suggested for blurring, and the minimum detection confidence
@@ -113,7 +148,9 @@ def apply_gaussian_blur(image_np_rgba, mask_np_binary, blur_radius_odd):
 
 # Gradio Event Handlers
 def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
-    """Handles new file uploads, prepares image for editor, and cleans up old temp files."""
+    """Handles new file uploads, prepares image for editor, and cleans up old temp files.
+    Also returns the full-quality original, which is what gets blurred (the editor only
+    holds a compressed preview copy)."""
     if uploaded_file_path:
         try:
             # Validate uploaded_file_path
@@ -122,11 +159,12 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
             if not is_within_temp_dir(resolved_upload_path):
                 logger.error(f"Security alert: Upload path '{uploaded_file_path}' resolves to '{resolved_upload_path}', which is outside the allowed temp directories. Aborting upload.")
                 return (
-                    gr.update(value=None),
+                    gr.update(),
                     gr.HTML("Invalid file path detected. Upload failed.", elem_classes="status-error"),
                     gr.DownloadButton(visible=False),
                     None,
-                    current_temp_file_for_download 
+                    current_temp_file_for_download,
+                    gr.skip()
                 )
             
             # Only decode PNG/JPEG regardless of file extension, and check size before decoding pixels
@@ -134,11 +172,12 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 if opened_img.width * opened_img.height > MAX_IMAGE_PIXELS:
                     logger.warning(f"Rejected upload of {opened_img.width}x{opened_img.height} image (over pixel limit).")
                     return (
-                        gr.update(value=None),
+                        gr.update(),
                         gr.HTML(f"Image is too large ({opened_img.width}x{opened_img.height}). Please resize it to under {MAX_IMAGE_PIXELS // 1_000_000} megapixels.", elem_classes="status-error"),
                         gr.DownloadButton(visible=False),
                         None,
-                        current_temp_file_for_download
+                        current_temp_file_for_download,
+                        gr.skip()
                     )
                 # Apply camera rotation so phone photos are not shown sideways
                 img = ImageOps.exif_transpose(opened_img).convert("RGBA")
@@ -152,40 +191,47 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 gr.HTML("Image loaded successfully! You can now draw on it or get AI suggestions.", elem_classes="status-success"),
                 gr.DownloadButton(visible=False), 
                 None, 
-                None 
+                None,
+                img
             )
         except (UnidentifiedImageError, Image.DecompressionBombError) as e:
             logger.warning(f"Rejected uploaded file: {e}")
             return (
-                gr.update(value=None),
+                gr.update(),
                 gr.HTML("Could not open this file. Please upload a valid PNG or JPG image under 40 megapixels.", elem_classes="status-error"),
                 gr.DownloadButton(visible=False),
                 None,
-                current_temp_file_for_download
+                current_temp_file_for_download,
+                gr.skip()
             )
         except Exception as e:
             # Details are logged server-side only, so file paths are never shown to the user
             logger.error(f"Error processing uploaded file: {e}", exc_info=True)
             return (
-                gr.update(value=None),
+                gr.update(),
                 gr.HTML("Error loading image. Please try a different file.", elem_classes="status-error"),
                 gr.DownloadButton(visible=False),
                 None,
-                current_temp_file_for_download 
+                current_temp_file_for_download,
+                gr.skip()
             )
     
-    # Case: No file uploaded or file cleared - reset the editor and discard any pending download
+    # Case: No file uploaded or file cleared - discard the result and any pending download.
+    # The editor is left as-is: emptying it after drawing leaves the Gradio 6 editor stuck
+    # loading, and the next upload replaces its contents anyway.
     remove_temp_file(current_temp_file_for_download)
     return (
-        gr.update(value=None),
+        gr.update(),
         gr.HTML("No file provided or file cleared.", elem_classes="status-info"),
         gr.DownloadButton(visible=False),
         None,
-        None
+        None,
+        gr.skip()  # Keep the original in sync with the editor, which is also left as-is
     )
 
-def handle_blur_click(editor_data, current_temp_file_for_download, blur_strength_slider_value):
-    """Applies blur to areas drawn by user in ImageEditor, prepares for download."""
+def handle_blur_click(editor_data, original_image, current_temp_file_for_download, blur_strength_slider_value):
+    """Applies blur to areas drawn by user in ImageEditor, prepares for download.
+    Blurs the full-quality original upload when available, using the editor only for the marked areas."""
     if not editor_data or not editor_data.get('background'):
         return (
             None, 
@@ -201,8 +247,13 @@ def handle_blur_click(editor_data, current_temp_file_for_download, blur_strength
         logger.error("Background is not a PIL image. This indicates an issue with ImageEditor's output type.")
         return None, gr.HTML("Internal error: Background image format incorrect.", elem_classes="status-error"), gr.DownloadButton(visible=False), current_temp_file_for_download
 
-    background_np_rgba = np.array(background_pil.convert("RGBA"))
-    
+    # The editor's copy is compressed for display, so blur the original upload instead
+    if isinstance(original_image, Image.Image) and original_image.size == background_pil.size:
+        source_pil = original_image
+    else:
+        source_pil = background_pil
+    background_np_rgba = np.array(source_pil.convert("RGBA"))
+
     if not layers_pil: # No drawing layers found
         return (
             None,
@@ -269,11 +320,11 @@ def handle_blur_click(editor_data, current_temp_file_for_download, blur_strength
         )
 
 def handle_suggest_click(editor_data):
-    """Uses YOLOv11 to detect objects and adds them as a new layer in ImageEditor."""
+    """Uses YOLO26 to detect objects and adds them as a new layer in ImageEditor."""
     if not yolo_model:
         return (
             editor_data, # Return original data, no changes
-            gr.HTML("Privacy Suggestions unavailable: YOLOv11 model not loaded.", elem_classes="status-error"),
+            gr.HTML("Privacy Suggestions unavailable: YOLO26 model not loaded.", elem_classes="status-error"),
             gr.DownloadButton(visible=False) # Ensure download button is hidden
         )
         
@@ -301,7 +352,7 @@ def handle_suggest_click(editor_data):
 
         suggestion_made = False
 
-        # Process YOLOv11 results
+        # Process YOLO26 results
         for result in results:
             boxes = result.boxes
             if boxes is not None:
@@ -320,15 +371,28 @@ def handle_suggest_click(editor_data):
                         draw.rectangle([xmin, ymin, xmax, ymax], fill=(255, 0, 0, 100)) # RGBA: Red, ~40% opacity
                         suggestion_made = True
         
-        # Get current layers, ensure it's a list
-        current_layers = editor_data.get('layers', []) if editor_data.get('layers') else []
-        updated_layers = current_layers + ([suggestion_layer_pil] if suggestion_made else [])
-        
+        # Merge existing drawings and the new suggestion boxes into a single layer.
+        # Sending several layers back makes the Gradio 6 editor hang while loading.
+        current_layers = editor_data.get('layers') or []
+        merged_layer_pil = Image.new("RGBA", background_pil.size, (0, 0, 0, 0))
+        for layer_pil in current_layers:
+            if isinstance(layer_pil, Image.Image):
+                layer_rgba = layer_pil.convert("RGBA")
+                if layer_rgba.size != background_pil.size:
+                    layer_rgba = layer_rgba.resize(background_pil.size, Image.NEAREST)
+                merged_layer_pil = Image.alpha_composite(merged_layer_pil, layer_rgba)
+        if suggestion_made:
+            merged_layer_pil = Image.alpha_composite(merged_layer_pil, suggestion_layer_pil)
+        updated_layers = [merged_layer_pil] if (current_layers or suggestion_made) else []
+
         # Update the ImageEditor value with the new layer
+        composite_pil = background_pil.convert("RGBA")
+        for layer_pil in updated_layers:
+            composite_pil = Image.alpha_composite(composite_pil, layer_pil)
         updated_editor_value = {
             "background": background_pil,
             "layers": updated_layers,
-            "composite": None # Let Gradio rebuild composite from background and new layers
+            "composite": composite_pil
         }
         
         if suggestion_made:
@@ -453,8 +517,8 @@ label {
 # delete_cache removes uploaded/processed images from Gradio's cache after an hour.
 # analytics_enabled=False stops Gradio from sending usage statistics.
 with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=False) as demo:
-    gr.Markdown("# Blur Tool", elem_classes="main-title")
-    gr.Markdown("*Draw to blur images then Download them. Powered by Gradio, OpenCV, and YOLOv11.*", elem_classes="subtitle")
+    gr.Markdown("# Blur Tool")
+    gr.Markdown("*Draw to blur images then Download them. Powered by Gradio, OpenCV, and YOLO26.*")
     
     # Browser compatibility warning
     gr.HTML("""
@@ -462,7 +526,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         <strong> Firefox Users:</strong> If the image editor doesn't work, try enabling hardware acceleration in Firefox Settings → Performance, 
         or use Google Chrome for guaranteed compatibility.
     </div>
-    """, elem_classes="compatibility-notice")
+    """)
     
     # Collapsible instructions
     with gr.Accordion("How to Use", open=False):
@@ -472,7 +536,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         1. **Upload**: Click 'Upload Image' or drag & drop your JPG/PNG file
         2. **Mark Areas**: Choose your method:
            - **Manual**: Use brush tools to draw on areas you want blurred
-           - **AI Assist**: Click 'Privacy Suggestions' - uses YOLOv11 AI to automatically detect people, cars, and other privacy-sensitive objects
+           - **AI Assist**: Click 'Privacy Suggestions' - uses YOLO26 AI to automatically detect people, cars, and other privacy-sensitive objects
         3. **Apply**: Adjust blur strength and click 'Apply Blur'
         4. **Download**: Save your processed image
         
@@ -491,6 +555,8 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     # State variable to hold the path of the temporary blurred image for the download button.
     # The file is deleted when the user's session ends.
     temp_file_path_for_download_state = gr.State(None, delete_callback=remove_temp_file)
+    # Full-quality copy of the uploaded image (kept server-side, freed when the session ends).
+    original_image_state = gr.State(None)
 
     with gr.Row():
         with gr.Column(scale=3): # Main interactive column
@@ -536,8 +602,9 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
             
             output_image = gr.Image(
                 label="Processed Image", 
-                interactive=False, 
-                type="pil"
+                interactive=False,
+                type="pil",
+                format="png"
             )
             
             download_button = gr.DownloadButton("Download Blurred Image", visible=False, size="lg")
@@ -554,18 +621,18 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     file_uploader.upload(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state]
     )
     file_uploader.clear(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state]
     )
     
     # Blur button actions
     blur_button.click(
         fn=handle_blur_click,
-        inputs=[image_editor, temp_file_path_for_download_state, blur_strength_slider],
+        inputs=[image_editor, original_image_state, temp_file_path_for_download_state, blur_strength_slider],
         outputs=[output_image, status_html, download_button, temp_file_path_for_download_state]
     )
     
