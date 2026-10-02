@@ -56,3 +56,5 @@ blurred_*.png
 # Gradio files
 *.gradio
 *.pem
+# Local test images
+test_images/

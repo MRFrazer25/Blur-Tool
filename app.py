@@ -501,10 +501,10 @@ def handle_suggest_click(editor_data, original_image, saved_marks, detection_mod
         )
 
 def handle_clear_marks():
-    """Removes the saved Privacy Suggestions marks (brush strokes are managed in the editor itself)."""
+    """Removes all saved Privacy Suggestions areas (brush strokes are managed in the editor itself)."""
     return (
         gr.update(value=None, visible=False),
-        gr.HTML("AI marks cleared. Brush strokes stay in the editor - use its eraser or undo to remove them.", elem_classes="status-info"),
+        gr.HTML("Privacy Suggestions removed - those red areas will no longer be blurred. Your brush strokes are kept; use the editor's eraser or undo to remove them.", elem_classes="status-info"),
         None
     )
 
@@ -638,7 +638,8 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         - **Exact outlines** traces the shape of those objects, so less of the background gets blurred
         - **Faces only** marks just people's faces - very small or turned-away faces can be missed
         - License plates and text are not detected - mark those with the brush
-        - AI suggestions appear in a preview below the editor - add more areas with the brush, or click 'Clear AI Marks' to start over
+        - Suggestions appear in red in a preview below the editor, and running them again adds more
+        - 'Remove Privacy Suggestions' deletes all suggested areas (your brush strokes stay) - e.g. to switch from whole objects to faces only
         - Higher blur values create stronger effects
         - Images are processed by the server running this app (your own machine when run locally)
         """)
@@ -707,7 +708,13 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
             with gr.Row():
                 suggest_button = gr.Button("Privacy Suggestions", size="sm", variant="primary")
                 blur_button = gr.Button("Apply Blur", variant="primary", size="sm")
-            clear_marks_button = gr.Button("Clear AI Marks", size="sm", variant="secondary")
+            clear_marks_button = gr.Button("Remove Privacy Suggestions", size="sm", variant="secondary")
+            gr.Markdown(
+                "<small>Privacy Suggestions add up each time you run them. "
+                "**Remove Privacy Suggestions** deletes all the red areas they found (shown in the preview), "
+                "so they won't be blurred. It does not touch what you drew with the brush - "
+                "use the editor's eraser or undo for that.</small>"
+            )
 
             gr.HTML("<div class='section-header'>Results</div>")
             

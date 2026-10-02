@@ -46,7 +46,7 @@ An intelligent image privacy application combining manual drawing tools with AI-
 - **Exact outlines:** traces the exact shape of the same objects, so less of the background gets blurred
 - **Faces only:** finds people's faces from body keypoints (eyes, nose, ears) and marks just the head
 
-Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (in any mode) adds to the marks, and **Clear AI Marks** removes them. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
+Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (in any mode) adds more areas. **Remove Privacy Suggestions** deletes all the suggested areas so they won't be blurred - for example, to switch from whole objects to faces only. It doesn't affect your brush strokes; use the editor's eraser or undo for those. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
 
 ## Troubleshooting
 
