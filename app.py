@@ -417,11 +417,11 @@ SUGGESTION_MESSAGES = {
                  "No faces detected. Faces that are very small, hidden, or turned away can be missed. Try manual drawing instead."),
 }
 
-def handle_suggest_click(editor_data, original_image, saved_marks, detection_mode=MODE_OBJECTS):
+def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECTS):
     """Uses YOLO26 to detect privacy targets (whole objects, exact outlines, or faces).
 
-    The detections are kept server-side as a mask and shown in a separate preview image; Apply
-    Blur combines them with the brush strokes in the editor. The editor itself is never updated
+    Each run replaces the previous suggestions. The detections are kept server-side as a mask and
+    shown in a separate preview image; Apply Blur combines them with the brush strokes in the editor. The editor itself is never updated
     here: pushing new content into the Gradio 6 editor while it is still syncing recent brush
     strokes can leave it stuck loading.
 
@@ -471,18 +471,16 @@ def handle_suggest_click(editor_data, original_image, saved_marks, detection_mod
 
         found_msg, none_msg = SUGGESTION_MESSAGES.get(detection_mode, SUGGESTION_MESSAGES[MODE_OBJECTS])
         if found_count == 0:
-            # Nothing new: leave the saved marks and preview as they are
+            # Nothing found: previous suggestions are replaced too, so they won't be blurred
             return (
                 gr.HTML(none_msg, elem_classes="status-info"),
                 gr.DownloadButton(visible=False),
-                gr.skip(),
-                gr.skip()
+                None,
+                gr.update(value=None, visible=False)
             )
 
-        # Saved AI marks = previous AI marks + new detections (brush strokes stay in the editor)
+        # New suggestions replace the previous ones (brush strokes stay in the editor)
         marks = layers_to_mask([suggestion_layer_pil], base_pil.size)
-        if isinstance(saved_marks, np.ndarray) and saved_marks.shape == marks.shape:
-            marks |= saved_marks
 
         return (
             gr.HTML(found_msg.format(n=found_count), elem_classes="status-success"),
@@ -638,8 +636,8 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         - **Exact outlines** traces the shape of those objects, so less of the background gets blurred
         - **Faces only** marks just people's faces - very small or turned-away faces can be missed
         - License plates and text are not detected - mark those with the brush
-        - Suggestions appear in red in a preview below the editor, and running them again adds more
-        - 'Remove Privacy Suggestions' deletes all suggested areas (your brush strokes stay) - e.g. to switch from whole objects to faces only
+        - Suggestions appear in red in a preview below the editor; running them again (e.g. after switching mode) replaces them
+        - 'Remove Privacy Suggestions' deletes the suggested areas so they won't be blurred (your brush strokes stay)
         - Higher blur values create stronger effects
         - Images are processed by the server running this app (your own machine when run locally)
         """)
@@ -710,8 +708,8 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
                 blur_button = gr.Button("Apply Blur", variant="primary", size="sm")
             clear_marks_button = gr.Button("Remove Privacy Suggestions", size="sm", variant="secondary")
             gr.Markdown(
-                "<small>Privacy Suggestions add up each time you run them. "
-                "**Remove Privacy Suggestions** deletes all the red areas they found (shown in the preview), "
+                "<small>Each Privacy Suggestions run replaces the previous one, so switch the mode and run it again "
+                "to compare. **Remove Privacy Suggestions** deletes the red areas they found (shown in the preview), "
                 "so they won't be blurred. It does not touch what you drew with the brush - "
                 "use the editor's eraser or undo for that.</small>"
             )
@@ -757,7 +755,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     # Suggest button actions
     suggest_button.click(
         fn=handle_suggest_click,
-        inputs=[image_editor, original_image_state, marks_state, detection_mode_radio],
+        inputs=[image_editor, original_image_state, detection_mode_radio],
         outputs=[status_html, download_button, marks_state, marks_preview]
     )
 
