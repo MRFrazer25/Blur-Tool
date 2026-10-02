@@ -5,6 +5,8 @@ from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 import os
 import tempfile
 import logging
+import secrets
+import threading
 
 # Never let Ultralytics pip-install packages at runtime (e.g. when an upload fails to decode).
 os.environ["YOLO_AUTOINSTALL"] = "False"
@@ -113,20 +115,33 @@ def is_within_temp_dir(path):
             continue
     return False
 
-def remove_temp_file(path):
-    """Deletes a previously generated temp file, but only if it lives inside an allowed temp directory."""
-    if not path:
+# Blurred output files created by this app, keyed by a random ID. Sessions only ever hold the
+# ID, never a file path, so only files the app itself created can be deleted.
+_output_files = {}
+_output_files_lock = threading.Lock()
+
+def register_output_file(file_path):
+    """Records a blurred output file this app created and returns its random ID."""
+    file_id = secrets.token_hex(16)
+    with _output_files_lock:
+        _output_files[file_id] = file_path
+    return file_id
+
+def remove_temp_file(file_id):
+    """Deletes the blurred output file registered under file_id. Unknown IDs are ignored."""
+    if not isinstance(file_id, str):
         return
-    if not is_within_temp_dir(path):
-        logger.error(f"Security alert: Temp path '{path}' is outside the allowed temp directories. Skipping cleanup of this path.")
+    with _output_files_lock:
+        file_path = _output_files.pop(file_id, None)
+    if file_path is None:
         return
-    resolved_path = os.path.realpath(path)
-    if os.path.exists(resolved_path):
-        try:
-            os.remove(resolved_path)
-            logger.info(f"Removed previous temporary download file: {resolved_path}")
-        except Exception as e:
-            logger.error(f"Error removing old temp file {resolved_path}: {e}")
+    try:
+        os.remove(file_path)
+        logger.info(f"Removed previous temporary download file: {file_path}")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.error(f"Error removing old temp file {file_path}: {e}")
 
 # Core Functions
 def layers_to_mask(layers, size):
@@ -334,7 +349,7 @@ def handle_blur_click(editor_data, original_image, saved_marks, current_temp_fil
             blurred_image_pil, # Display in output_image component
             gr.HTML("Blur applied successfully! Download your privacy-protected image below.", elem_classes="status-success"),
             gr.DownloadButton(value=new_temp_file_for_download_path, visible=True, label="Download Blurred Image"),
-            new_temp_file_for_download_path # Update state with new temp file path
+            register_output_file(new_temp_file_for_download_path) # State holds only the file's ID
         )
     except Exception as e:
         logger.error(f"Error saving blurred image to temp file: {e}", exc_info=True)
@@ -645,7 +660,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     # Status messages for user feedback (dynamic, including ready state)
     status_html = gr.HTML("Ready. Upload an image to begin.", elem_classes="status-info status-bar")
 
-    # State variable to hold the path of the temporary blurred image for the download button.
+    # ID of the temporary blurred image for the download button (never a file path).
     # The file is deleted when the user's session ends.
     temp_file_path_for_download_state = gr.State(None, delete_callback=remove_temp_file)
     # Full-quality copy of the uploaded image (kept server-side, freed when the session ends).
