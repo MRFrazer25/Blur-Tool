@@ -61,7 +61,8 @@ Suggestions appear in a preview below the editor, and Apply Blur blurs them toge
 
 * **Where Images Go:** Images are processed on this Hugging Face Space's server and are never sent to any other third-party service.
 * **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app.
-* **Temporary Storage Only:** Uploads and results are stored as temporary files on the Space. Blurred results are deleted when your session ends, and uploads are cleared from the cache after about an hour.
+* **Temporary Storage Only:** Uploads and results are stored as temporary files on the Space and deleted within about an hour, even if the Space restarts. Per-session data expires after 30 minutes of inactivity.
+* **Abuse Limits:** At most 20 queued requests and 100 stored sessions at a time, so a flood of requests can't exhaust the Space.
 * **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details).
 * **Upload Checks:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels.
 * **Safe Errors:** Error messages never include server file paths or internal details.

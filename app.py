@@ -7,6 +7,7 @@ import tempfile
 import logging
 import secrets
 import threading
+import time
 
 # Never let Ultralytics pip-install packages at runtime (e.g. when an upload fails to decode).
 os.environ["YOLO_AUTOINSTALL"] = "False"
@@ -100,6 +101,17 @@ Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS  # Pillow rejects decompression bombs 
 MIN_BLUR_STRENGTH = 1
 MAX_BLUR_STRENGTH = 101
 
+# Resource limits for a public deployment
+MAX_QUEUED_REQUESTS = 20         # Further requests get a "busy" error instead of piling up
+MAX_STORED_SESSIONS = 100        # Least recently used sessions beyond this are dropped from memory
+SESSION_DATA_TTL_SECONDS = 1800  # Per-session images/marks expire after 30 minutes without updates
+
+# Blurred results are written to the app's own folder; files older than an hour are swept
+# regularly, which also catches files left behind by crashes, restarts or dropped sessions.
+OUTPUT_DIR = os.path.join(tempfile.gettempdir(), "blur-tool-outputs")
+OUTPUT_MAX_AGE_SECONDS = 3600
+OUTPUT_SWEEP_INTERVAL_SECONDS = 600
+
 # Helper Functions
 def is_within_temp_dir(path):
     """Returns True if path resolves to a location inside the system temp directory
@@ -142,6 +154,34 @@ def remove_temp_file(file_id):
         pass
     except Exception as e:
         logger.error(f"Error removing old temp file {file_path}: {e}")
+
+def sweep_old_outputs(max_age_seconds=OUTPUT_MAX_AGE_SECONDS):
+    """Deletes blurred output files in OUTPUT_DIR older than max_age_seconds. Returns how many were deleted."""
+    cutoff = time.time() - max_age_seconds
+    deleted = 0
+    try:
+        entries = list(os.scandir(OUTPUT_DIR))
+    except FileNotFoundError:
+        return 0
+    for entry in entries:
+        try:
+            if entry.is_file(follow_symlinks=False) and entry.stat().st_mtime < cutoff:
+                os.remove(entry.path)
+                deleted += 1
+        except OSError:
+            pass
+    # Forget registry entries whose files are gone
+    with _output_files_lock:
+        for file_id in [i for i, p in _output_files.items() if not os.path.exists(p)]:
+            del _output_files[file_id]
+    if deleted:
+        logger.info(f"Swept {deleted} old blurred output file(s).")
+    return deleted
+
+def _sweep_outputs_forever():
+    while True:
+        sweep_old_outputs()
+        time.sleep(OUTPUT_SWEEP_INTERVAL_SECONDS)
 
 # Core Functions
 def layers_to_mask(layers, size):
@@ -340,7 +380,8 @@ def handle_blur_click(editor_data, original_image, saved_marks, current_temp_fil
     new_temp_file_for_download_path = None
     try:
         # Save blurred image to a new temporary file for download
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="blurred_") as tmp_file:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="blurred_", dir=OUTPUT_DIR) as tmp_file:
             blurred_image_pil.save(tmp_file.name, "PNG")
             new_temp_file_for_download_path = tmp_file.name
         logger.info(f"Blurred image saved to temporary file for download: {new_temp_file_for_download_path}")
@@ -661,12 +702,12 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     status_html = gr.HTML("Ready. Upload an image to begin.", elem_classes="status-info status-bar")
 
     # ID of the temporary blurred image for the download button (never a file path).
-    # The file is deleted when the user's session ends.
-    temp_file_path_for_download_state = gr.State(None, delete_callback=remove_temp_file)
+    # The file is deleted when the session data expires (and swept after an hour regardless).
+    temp_file_path_for_download_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS, delete_callback=remove_temp_file)
     # Full-quality copy of the uploaded image (kept server-side, freed when the session ends).
-    original_image_state = gr.State(None)
+    original_image_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
     # Areas found by the latest Privacy Suggestions run, as a 0/1 mask (brush strokes stay in the editor).
-    marks_state = gr.State(None)
+    marks_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
 
     with gr.Row():
         with gr.Column(scale=3): # Main interactive column
@@ -781,9 +822,13 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         outputs=[marks_preview, status_html, marks_state]
     )
 
+# Limit how many requests can wait at once, so a flood is turned away instead of piling up
+demo.queue(max_size=MAX_QUEUED_REQUESTS)
+
 # When main is run, start the application
 if __name__ == "__main__":
+    threading.Thread(target=_sweep_outputs_forever, daemon=True, name="output-sweeper").start()
     logger.info("Starting Gradio Blur Tool app...")
     # Runs locally only by default. Set the environment variable GRADIO_SHARE=True
     # to also create a temporary public Gradio link.
-    demo.launch(theme='base', css=css, max_file_size="25mb")
+    demo.launch(theme='base', css=css, max_file_size="25mb", state_session_capacity=MAX_STORED_SESSIONS)

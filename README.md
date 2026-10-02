@@ -89,7 +89,8 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 
 * **No Data Collection:** Images are processed only by the server running the app (your machine when run locally) and are never sent to a third-party service
 * **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app
-* **Session-Only Processing:** Blurred output files are deleted when a session ends, and Gradio's upload cache is cleared of files older than one hour
+* **Session-Only Processing:** Uploaded images and blurred results are deleted within about an hour, even if the app crashes or restarts. Per-session data expires after 30 minutes of inactivity
+* **Abuse Limits:** At most 20 queued requests and 100 stored sessions at a time, so a flood of requests can't exhaust the server
 * **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details)
 * **Local AI Models:** YOLO26 runs entirely on your machine after download
 * **Private by Default:** No public share link is created unless you opt in with `GRADIO_SHARE=True`
