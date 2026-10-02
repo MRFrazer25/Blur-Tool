@@ -142,7 +142,7 @@ def layers_to_mask(layers, size):
     return mask
 
 def render_marks_preview(base_image, marks):
-    """Returns the image with marked areas tinted semi-transparent red, for display in the editor."""
+    """Returns the image with marked areas tinted semi-transparent red, for the Privacy Suggestions preview."""
     overlay = np.zeros((base_image.height, base_image.width, 4), dtype=np.uint8)
     overlay[marks.astype(bool)] = SUGGESTION_FILL
     return Image.alpha_composite(base_image.convert("RGBA"), Image.fromarray(overlay, "RGBA"))
@@ -421,9 +421,9 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
     """Uses YOLO26 to detect privacy targets (whole objects, exact outlines, or faces).
 
     Each run replaces the previous suggestions. The detections are kept server-side as a mask and
-    shown in a separate preview image; Apply Blur combines them with the brush strokes in the editor. The editor itself is never updated
-    here: pushing new content into the Gradio 6 editor while it is still syncing recent brush
-    strokes can leave it stuck loading.
+    shown in a separate preview image; Apply Blur combines them with the brush strokes in the
+    editor. The editor itself is never updated here: pushing new content into the Gradio 6 editor
+    while it is still syncing recent brush strokes can leave it stuck loading.
 
     Returns (status, download button, marks, preview image update)."""
     model = yolo_models.get(detection_mode)
@@ -448,7 +448,7 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
         logger.error("Background for suggestion is not a PIL image.")
         return gr.HTML("Internal error: Image format incorrect for Privacy Suggestions.", elem_classes="status-error"), gr.DownloadButton(visible=False), gr.skip(), gr.skip()
 
-    # Detect on the clean original (the editor's copy may already show red marks)
+    # Detect on the full-quality original (the editor's copy is compressed)
     if isinstance(original_image, Image.Image) and original_image.size == background_pil.size:
         base_pil = original_image
     else:
@@ -650,7 +650,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     temp_file_path_for_download_state = gr.State(None, delete_callback=remove_temp_file)
     # Full-quality copy of the uploaded image (kept server-side, freed when the session ends).
     original_image_state = gr.State(None)
-    # Areas marked by Privacy Suggestions (plus brush strokes made before it), as a 0/1 mask.
+    # Areas found by the latest Privacy Suggestions run, as a 0/1 mask (brush strokes stay in the editor).
     marks_state = gr.State(None)
 
     with gr.Row():
@@ -729,7 +729,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         "<div class='privacy-notice'>"
         "<strong>Privacy First:</strong> Images are processed only by the server running this app "
         "(your own machine when run locally) and are not sent to any third-party service. "
-        "The AI model downloads once from Ultralytics if needed."
+        "The AI models download once from Ultralytics if needed."
         "</div>"
     )
     

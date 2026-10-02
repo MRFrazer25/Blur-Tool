@@ -58,3 +58,6 @@ blurred_*.png
 *.pem
 # Local test images
 test_images/
+
+# Local tool settings
+.claude/
