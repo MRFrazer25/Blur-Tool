@@ -7,7 +7,7 @@ An intelligent image privacy application that combines manual drawing tools with
 * **Intelligent Drawing Interface:** Advanced brush tools with customizable size and color for precise area marking
 * **AI Privacy Suggestions:** YOLO26 finds privacy-sensitive areas for you, as whole-object boxes, exact outlines, or faces only
 * **Local Processing:** When run locally, images never leave your machine
-* **Real-Time Preview:** Instant blur application with adjustable strength control (1-101 intensity levels)
+* **Real-Time Preview:** Instant blur application with adjustable strength (10–100) that scales with image size
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
 * **Browser Compatibility Notice:** Built-in guidance for Firefox users
 * **Offline Capable:** AI suggestions work offline after initial model download
@@ -62,7 +62,7 @@ The Space uses the same `app.py` and `requirements.txt` as this repository. Its 
 The application workflow:
 1. **Upload** your image through drag-and-drop or file picker (PNG/JPG supported)
 2. **Mark Areas** using manual drawing tools or AI-generated privacy suggestions
-3. **Configure** blur strength using the intensity slider (1-101 range)
+3. **Configure** blur strength using the intensity slider (10–100; stronger on larger photos)
 4. **Apply** Gaussian blur processing to marked regions with OpenCV
 5. **Download** the processed image with privacy areas blurred
 
@@ -71,7 +71,7 @@ The application workflow:
 - **Exact outlines:** traces the exact shape of the same objects, so less of the background gets blurred
 - **Faces only:** finds people's faces from body keypoints (eyes, nose, ears) and marks just the head
 
-Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (for example after switching mode) replaces the previous suggestions. **Remove Privacy Suggestions** deletes the suggested areas so they won't be blurred. Neither affects your brush strokes; use the editor's eraser or undo for those. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
+Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (for example after switching mode) replaces the previous suggestions. **Remove Privacy Suggestions** deletes the suggested areas so they won't be blurred. Neither affects your brush strokes; use the editor's eraser or undo for those. If the suggestion marks expire (about 30 minutes of inactivity) or the session is dropped, Apply Blur refuses and asks you to run Privacy Suggestions again instead of silently leaving those areas unblurred. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
 
 Choose between manual precision drawing or AI-assisted detection based on your workflow needs.
 
@@ -89,14 +89,14 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 
 * **No Data Collection:** Images are processed only by the server running the app (your machine when run locally) and are never sent to a third-party service
 * **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app
-* **Session-Only Processing:** Uploaded images and blurred results are deleted within about an hour, even if the app crashes or restarts. Per-session data expires after 30 minutes of inactivity
-* **Abuse Limits:** At most 20 queued requests and 100 stored sessions at a time, so a flood of requests can't exhaust the server
+* **Session-Only Processing:** Uploaded images and blurred results are deleted within about an hour, even if the app crashes or restarts. Per-session data expires after 30 minutes of inactivity. Sessions keep a compressed copy of the upload and a packed suggestion mask, not full-resolution RGBA arrays
+* **Abuse Limits:** At most 20 queued requests and 25 stored sessions at a time. The 25 MB upload cap, session cap, and output cleanup apply whether you start with `python app.py` or `gradio app.py`
 * **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details)
 * **Local AI Models:** YOLO26 runs entirely on your machine after download
 * **Private by Default:** No public share link is created unless you opt in with `GRADIO_SHARE=True`
-* **Upload Limits:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels
+* **Upload Limits:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels. The same size and layer limits are checked again when you blur or run Privacy Suggestions
 * **Safe Errors:** Error messages shown in the app never include server file paths or internal details
-* **Path Validation:** File paths are checked to stay inside the temp/upload directories before any read or delete
+* **Path Validation:** File paths are checked to stay inside the temp/upload directories before any read or delete. Blurred outputs are written to a per-process temp folder
 
 ## License
 
