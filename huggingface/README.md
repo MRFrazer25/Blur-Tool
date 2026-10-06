@@ -19,7 +19,7 @@ An intelligent image privacy application combining manual drawing tools with AI-
 
 * **Intelligent Drawing Interface:** Brush tools with customizable size and color for precise area marking
 * **AI Privacy Suggestions:** YOLO26 finds privacy-sensitive areas for you, as whole-object boxes, exact outlines, or faces only
-* **Hosted on Hugging Face Spaces:** Runs in your browser via the hosted Space
+* **Hosted on Hugging Face Spaces:** The page opens in your browser. Blur and YOLO run on the Space server, so the photo is uploaded there
 * **Real-Time Preview:** Instant blur application with adjustable strength (10–100) that scales with image size
 * **Professional Dark Theme:** Modern UI with excellent contrast and accessibility
 * **Browser Compatibility Notice:** Built-in guidance for Firefox users
@@ -46,27 +46,28 @@ An intelligent image privacy application combining manual drawing tools with AI-
 - **Exact outlines:** traces the exact shape of the same objects, so less of the background gets blurred
 - **Faces only:** finds people's faces from body keypoints (eyes, nose, ears) and marks just the head
 
-Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (for example after switching mode) replaces the previous suggestions. **Remove Privacy Suggestions** deletes the suggested areas so they won't be blurred. Neither affects your brush strokes; use the editor's eraser or undo for those. If the suggestion marks expire (about 30 minutes of inactivity) or the session is dropped, Apply Blur refuses and asks you to run Privacy Suggestions again instead of silently leaving those areas unblurred. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
+Suggestions appear in a preview below the editor, and Apply Blur blurs them together with your brush strokes. Running Privacy Suggestions again (for example after switching mode) replaces the previous suggestions. **Remove Privacy Suggestions** deletes the suggested areas so they won't be blurred. Neither affects your brush strokes; use the editor's eraser or undo for those. If the suggestion marks expire (about 30 minutes after they were last saved) or the session is dropped, Apply Blur refuses and asks you to run Privacy Suggestions again instead of silently leaving those areas unblurred. Faces that are very small, hidden, or turned away can be missed, and license plates and text are not detected, so check the preview and mark anything else with the brush tool.
 
 ## Troubleshooting
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and refresh the page. Chrome generally provides the best compatibility.
 * **Image Too Large:** Uploads are limited to 25 MB and 40 megapixels. Resize larger images before uploading.
 * **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise.
-* **AI Suggestions Unavailable:** The YOLO26 models (about 20 MB total) are downloaded when the Space starts. If suggestions fail, wait a moment and try again, or mark areas manually.
+* **AI Suggestions Unavailable:** Each YOLO26 model (about 20 MB total) downloads from Ultralytics the first time that suggestion mode is used. That download is the model, not your photo. If suggestions fail, wait a moment and try again, or mark areas manually.
 * **Blur Not Applied:** Ensure you have drawn areas or used AI suggestions before clicking "Apply Blur."
 * **Slow Response on Large Images:** For very high-resolution uploads, try resizing locally (for example, to 1920×1080) before uploading to improve responsiveness.
 
 ## Security & Privacy
 
-* **Where Images Go:** Images are processed on this Hugging Face Space's server and are never sent to any other third-party service.
+* **Where Images Go:** The page opens in your browser. The photo is uploaded to this Hugging Face Space, and blur and YOLO run on the Space server. Hugging Face has the photo because Hugging Face is running the app. It is not sent to any other service.
 * **No Analytics:** Gradio and Ultralytics usage analytics are turned off inside the app.
-* **Temporary Storage Only:** Uploads and results are stored as temporary files on the Space and deleted within about an hour, even if the Space restarts. Per-session data expires after 30 minutes of inactivity. Sessions keep a compressed copy of the upload and a packed suggestion mask, not full-resolution RGBA arrays.
+* **Session timer:** The stored image, suggestion marks, and download id use a 30-minute Gradio `time_to_live`, counted from the last time each value was saved. How Gradio deletes state and cached uploads is in [Gradio's resource cleanup guide](https://www.gradio.app/guides/resource-cleanup). Who can request a cached file is in [Gradio's file access guide](https://www.gradio.app/guides/file-access).
+* **Space disk:** How long files stay on a Space's disk is [Hugging Face's disk usage guide](https://huggingface.co/docs/hub/spaces-storage). This app does not attach a Storage Bucket.
+* **Metadata:** The download is a new PNG without the original photo's EXIF (such as GPS location or camera details). The session copy used for blurring is also a PNG saved without that EXIF.
 * **Abuse Limits:** At most 20 queued requests and 25 stored sessions at a time. The 25 MB upload cap, session cap, and output cleanup apply when the Space imports the app, not only under `python app.py`.
-* **Metadata Removed:** Downloads are saved as fresh PNGs without the original photo's EXIF data (such as GPS location or camera details).
 * **Upload Checks:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels. The same size and layer limits are checked again when you blur or run Privacy Suggestions. Blurred outputs are written to a per-process temp folder.
 * **Safe Errors:** Error messages never include server file paths or internal details.
 
-To run the app on your own machine so images never leave it, see the GitHub repository.
+For a photo that should never leave your computer, run the app locally. See the GitHub repository.
 
 [GitHub](https://github.com/MRFrazer25/Blur-Tool)

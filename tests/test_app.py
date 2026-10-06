@@ -1,8 +1,9 @@
+import io
 import os
 import tempfile
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 import app
 
@@ -37,6 +38,21 @@ def _brush_layer(size, box=(8, 8, 28, 28)):
     return layer
 
 
+def test_privacy_copy_differs_on_space_and_locally():
+    local = app.privacy_notice_html(on_space=False)
+    space = app.privacy_notice_html(on_space=True)
+    assert "this computer" in local.lower()
+    assert "another service" in local.lower()
+    assert "hugging face" in space.lower()
+    assert "not sent to any other service" in space.lower()
+    assert "your own machine" not in space.lower()
+    assert "new png" in local.lower() and "new png" in space.lower()
+    assert "hugging face" in app.processing_location_line(on_space=True).lower()
+    assert "this computer" in app.processing_location_line(on_space=False).lower()
+    if not os.environ.get("SPACE_ID"):
+        assert "this computer" in app.privacy_notice_html().lower()
+
+
 def test_blocks_construct():
     assert app.demo is not None
     assert getattr(app.demo, "title", None) == "Blur Tool"
@@ -55,6 +71,65 @@ def test_pack_marks_roundtrip():
     assert np.array_equal(restored, mask)
     assert app.unpack_marks(packed, expected_shape=(10, 10)) is None
     assert app.unpack_marks(None) is None
+
+
+def _assert_png_has_no_exif(source):
+    if isinstance(source, (bytes, bytearray)):
+        handle = io.BytesIO(source)
+    else:
+        handle = source
+    with Image.open(handle) as img:
+        exif = img.getexif()
+        assert dict(exif) == {}
+        assert dict(exif.get_ifd(0x8825)) == {}
+        assert "exif" not in img.info
+
+
+def test_stored_and_download_pngs_drop_jpeg_exif():
+    """GPS and camera tags on a JPEG do not survive the session PNG or the download PNG."""
+    img = Image.new("RGB", (64, 48), (20, 80, 180))
+    exif = img.getexif()
+    exif[271] = "SecretCamera"
+    gps = exif.get_ifd(0x8825)
+    gps[1] = "N"
+    gps[2] = (40.0, 26.0, 46.0)
+    gps[3] = "W"
+    gps[4] = (79.0, 58.0, 56.0)
+
+    handle, path = tempfile.mkstemp(suffix=".jpg", dir=tempfile.gettempdir())
+    os.close(handle)
+    temp_id = None
+    try:
+        img.save(path, format="JPEG", exif=exif)
+        with Image.open(path) as opened:
+            assert opened.getexif().get(271) == "SecretCamera"
+            assert opened.getexif().get_ifd(0x8825).get(1) == "N"
+            stored = app.encode_stored_image(ImageOps.exif_transpose(opened))
+        _assert_png_has_no_exif(stored)
+
+        source = app.decode_stored_image(stored)
+        mask = np.zeros((source.height, source.width), dtype=np.uint8)
+        mask[4:20, 4:20] = 1
+        output, _status, _download, temp_id, _preview, _flag = app.handle_blur_click(
+            _editor(source),
+            stored,
+            app.pack_marks(mask),
+            True,
+            None,
+            app.DEFAULT_BLUR_STRENGTH,
+        )
+        assert output is not None
+        assert dict(output.getexif()) == {}
+        with app._output_files_lock:
+            download_path = app._output_files[temp_id]
+        _assert_png_has_no_exif(download_path)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        if temp_id:
+            app.remove_temp_file(temp_id)
 
 
 def test_stored_image_uses_rgb_when_opaque():

@@ -558,7 +558,11 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
 
         return _blur_status_return(
             blurred_image_pil,
-            gr.HTML("Blur applied successfully! Download your privacy-protected image below.", elem_classes="status-success"),
+            gr.HTML(
+                "Blur applied successfully! Download your privacy-protected image below. "
+                "The file is a new PNG without the original photo's location or camera data.",
+                elem_classes="status-success",
+            ),
             gr.DownloadButton(value=new_temp_file_for_download_path, visible=True, label="Download Blurred Image"),
             register_output_file(new_temp_file_for_download_path),
         )
@@ -828,7 +832,43 @@ label {
 """
 
 # Build the Gradio interface using Blocks for layout flexibility.
-# delete_cache removes uploaded/processed images from Gradio's cache after an hour.
+def on_hugging_face_space():
+    """True when this process is a Hugging Face Space. Spaces sets SPACE_ID; a local run does not."""
+    return bool(os.environ.get("SPACE_ID"))
+
+def privacy_notice_html(on_space=None):
+    """Footer copy for where the photo is processed. The Space and a local run are different."""
+    if on_space is None:
+        on_space = on_hugging_face_space()
+    if on_space:
+        body = (
+            "<strong>Privacy First:</strong> This page runs in your browser. "
+            "The photo is uploaded to this Hugging Face Space, and blur and suggestions run on that server. "
+            "Hugging Face has the photo because it is running the app. It is not sent to any other service. "
+            "The download is a new PNG without the original photo's location or camera data. "
+            "For a photo that should never leave your computer, run Blur Tool locally."
+        )
+    else:
+        body = (
+            "<strong>Privacy First:</strong> Images are processed on this computer and are not sent to another service. "
+            "Downloads are new PNG files without the original photo's location or camera data. "
+            "The AI models download once from Ultralytics if needed."
+        )
+    return "<div class='privacy-notice'>" + body + "</div>"
+
+def processing_location_line(on_space=None):
+    """One How to Use line, matching privacy_notice_html."""
+    if on_space is None:
+        on_space = on_hugging_face_space()
+    if on_space:
+        return (
+            "The page is in your browser. The photo is uploaded to this Hugging Face Space, where the blur runs. "
+            "To keep a photo on your own computer, run Blur Tool locally."
+        )
+    return "Images are processed on this computer and are not sent to another service."
+
+# delete_cache=(3600, 3600) deletes Gradio's cached uploads about an hour after
+# creation while this process is running, and again on a clean shutdown.
 # analytics_enabled=False stops Gradio from sending usage statistics.
 with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=False) as demo:
     gr.Markdown("# Blur Tool")
@@ -844,7 +884,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     
     # Collapsible instructions
     with gr.Accordion("How to Use", open=False):
-        gr.Markdown("""
+        gr.Markdown(f"""
         **Quick Start Guide:**
         
         1. **Upload**: Click 'Upload Image' or drag & drop your JPG/PNG file
@@ -864,14 +904,14 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
         - 'Remove Privacy Suggestions' deletes the suggested areas so they won't be blurred (your brush strokes stay)
         - Higher blur values create stronger effects (the blur scales with image size, so large photos stay unreadable)
         - If you wait a long time after Privacy Suggestions, Apply Blur will ask you to run them again rather than silently skip those areas
-        - Images are processed by the server running this app (your own machine when run locally)
+        - {processing_location_line()}
         """)
     
     # Status messages for user feedback (dynamic, including ready state)
     status_html = gr.HTML("Ready. Upload an image to begin.", elem_classes="status-info status-bar")
 
     # ID of the temporary blurred image for the download button (never a file path).
-    # The file is deleted when the session data expires (and swept after an hour regardless).
+    # The file is deleted when the session data expires. The hourly sweep runs only while this process is up.
     temp_file_path_for_download_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS, delete_callback=remove_temp_file)
     # Compact PNG bytes of the uploaded image (kept server-side, freed when the session ends).
     original_image_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
@@ -953,13 +993,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
             
             download_button = gr.DownloadButton("Download Blurred Image", visible=False, size="lg")
         
-    gr.Markdown(
-        "<div class='privacy-notice'>"
-        "<strong>Privacy First:</strong> Images are processed only by the server running this app "
-        "(your own machine when run locally) and are not sent to any third-party service. "
-        "The AI models download once from Ultralytics if needed."
-        "</div>"
-    )
+    gr.Markdown(privacy_notice_html())
     
     # File uploader actions
     file_uploader.upload(
