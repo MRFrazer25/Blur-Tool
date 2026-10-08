@@ -831,6 +831,10 @@ label {
 }
 """
 
+# The CSS above makes text light, so Gradio has to draw its panels dark too. Without this, a browser in
+# light mode draws light panels and labels, radio choices and help text become light on light.
+FORCE_DARK_JS = "() => { document.body.classList.add('dark'); }"
+
 # Build the Gradio interface using Blocks for layout flexibility.
 def on_hugging_face_space():
     """True when this process is a Hugging Face Space. Spaces sets SPACE_ID; a local run does not."""
@@ -1041,6 +1045,7 @@ def launch_with_limits(*args, **kwargs):
     kwargs.setdefault("state_session_capacity", MAX_STORED_SESSIONS)
     kwargs.setdefault("theme", "base")
     kwargs.setdefault("css", css)
+    kwargs.setdefault("js", FORCE_DARK_JS)
     _ensure_output_sweeper()
     return _original_demo_launch(*args, **kwargs)
 
