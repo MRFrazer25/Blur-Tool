@@ -2,7 +2,7 @@
 
 An intelligent image privacy application that combines manual drawing tools with AI-powered object detection for precise area blurring. Built with Gradio ImageEditor and YOLO26 via Ultralytics, it processes images locally using OpenCV with configurable Gaussian blur kernels while providing both manual control and automated privacy suggestions.
 
-![Blur Tool with a group photo loaded, showing AI face suggestions highlighted in red and the blurred result](docs/screenshot.png)
+![Blur Tool with the 1927 Solvay Conference photo loaded, showing Faces only suggestions highlighted in red and the blurred result](docs/screenshot.png)
 
 ## Features
 
