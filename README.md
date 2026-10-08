@@ -57,6 +57,17 @@ The Space uses the same `app.py` and `requirements.txt` as this repository. Its 
 4. **Access Interface:**
    Open your browser to `http://127.0.0.1:7860` and start processing images.
 
+### Option 3: Docker
+
+```bash
+docker build -t blur-tool .
+docker run --rm -p 127.0.0.1:7860:7860 blur-tool
+```
+
+Open `http://localhost:7860`. The three YOLO26 models are downloaded during the build, so Privacy Suggestions work offline. The image installs CPU-only PyTorch, which is most of its size.
+
+Keep the `127.0.0.1:` in the port mapping. With `-p 7860:7860`, Docker publishes the port on every network interface, so other devices on your network can open the app and send it photos.
+
 ## How It Works
 
 The application workflow:
