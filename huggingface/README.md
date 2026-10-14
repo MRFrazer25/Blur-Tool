@@ -52,7 +52,7 @@ Suggestions appear in a preview below the editor, and Apply Blur blurs them toge
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and refresh the page. Chrome generally provides the best compatibility.
 * **Image Too Large:** Uploads are limited to 25 MB and 40 megapixels. Resize larger images before uploading.
-* **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise.
+* **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise. The drawing editor does not work on phones. Use the Phone layout (Privacy Suggestions, Apply Blur, download) or open the page on a computer and choose Computer to draw.
 * **AI Suggestions Unavailable:** Each YOLO26 model (about 20 MB total) downloads from Ultralytics the first time that suggestion mode is used. That download is the model, not your photo. If suggestions fail, wait a moment and try again, or mark areas manually.
 * **Blur Not Applied:** Ensure you have drawn areas or used AI suggestions before clicking "Apply Blur."
 * **Slow Response on Large Images:** For very high-resolution uploads, try resizing locally (for example, to 1920×1080) before uploading to improve responsiveness.

@@ -92,6 +92,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and try different browser. Chrome provides best compatibility.
 * **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge for full functionality.
+* **Drawing on a phone:** The drawing editor does not work on phones. Use the Phone layout (Privacy Suggestions, Apply Blur, download) or open the page on a computer and choose Computer to draw.
 * **AI Suggestions Unavailable:** Check internet connection for initial YOLO26 model downloads (three small models, about 20 MB total). Manual drawing tools will still work offline.
 * **Application Won't Start:** Ensure Python 3.10+ and run `pip install -U -r requirements.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
 * **Image Too Large:** Images over 40 megapixels are rejected. Resize them before uploading

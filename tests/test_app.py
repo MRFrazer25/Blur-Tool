@@ -132,6 +132,169 @@ def test_stored_and_download_pngs_drop_jpeg_exif():
             app.remove_temp_file(temp_id)
 
 
+def test_editor_preview_caps_long_side():
+    img = Image.new("RGB", (2560, 1920), (1, 2, 3))
+    preview = app.editor_preview(img)
+    assert max(preview.size) == app.MAX_EDITOR_SIDE
+    assert abs(preview.size[0] / preview.size[1] - img.size[0] / img.size[1]) < 0.02
+    small = Image.new("RGB", (64, 48), (4, 5, 6))
+    assert app.editor_preview(small).size == (64, 48)
+    screen = app.screen_preview(img)
+    assert max(screen.size) == app.MAX_SCREEN_SIDE
+    assert screen.mode == "RGB"
+    rgba = Image.new("RGBA", (64, 48), (4, 5, 6, 128))
+    assert app.screen_preview(rgba).mode == "RGB"
+
+
+def _update_field(update, name):
+    if isinstance(update, dict):
+        return update.get(name)
+    value = getattr(update, name, None)
+    if value is not None:
+        return value
+    args = getattr(update, "constructor_args", None)
+    if isinstance(args, dict):
+        return args.get(name)
+    return None
+
+
+def _save_png(img):
+    handle, path = tempfile.mkstemp(suffix=".png", dir=tempfile.gettempdir())
+    os.close(handle)
+    img.save(path, "PNG")
+    return path
+
+
+def test_phone_user_agent_detection():
+    assert app.is_phone_user_agent(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
+    )
+    assert app.is_phone_user_agent(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36"
+    )
+    assert app.is_phone_user_agent(
+        "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
+    )
+    assert not app.is_phone_user_agent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/129.0.0.0"
+    )
+    assert not app.is_phone_user_agent("")
+    assert not app.is_phone_user_agent(None)
+
+
+def test_detect_device_layout_picks_phone_or_computer():
+    class _Request:
+        def __init__(self, ua):
+            self.headers = {"user-agent": ua}
+
+    phone_mode, editor_panel, uploaded, status = app.detect_device_layout(
+        _Request("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")
+    )
+    assert phone_mode == app.MODE_PHONE
+    assert _update_field(editor_panel, "visible") is False
+    assert "not available on phones" in _status_text(status).lower()
+
+    computer_mode, editor_panel, uploaded, status = app.detect_device_layout(
+        _Request("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0")
+    )
+    assert computer_mode == app.MODE_COMPUTER
+    assert _update_field(editor_panel, "visible") is True
+    assert "ready" in _status_text(status).lower()
+
+
+def test_drawing_limitation_is_stated():
+    text = app.PHONE_DRAWING_LIMITATION.lower()
+    assert "not available on phones" in text
+    assert "privacy suggestions" in text
+    how_to = app.how_to_use_markdown()
+    assert "not available on phones" in how_to.lower()
+    assert app.MODE_PHONE in how_to or "Phone" in how_to
+
+
+def test_phone_upload_shows_preview_and_skips_editor():
+    img = Image.new("RGB", (app.MAX_EDITOR_SIDE * 2, app.MAX_EDITOR_SIDE), (20, 80, 180))
+    path = _save_png(img)
+    try:
+        result = app.handle_file_upload(path, None, app.MODE_PHONE)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel = result
+    assert "successfully" in _status_text(status).lower()
+    assert "computer" in _status_text(status).lower() or "phone" in _status_text(status).lower()
+    display = _update_field(uploaded_view, "value")
+    assert max(display.size) == app.MAX_SCREEN_SIDE
+    assert _update_field(uploaded_view, "visible") is True
+    assert _update_field(editor_panel, "visible") is False
+    original = app.decode_stored_image(stored)
+    assert original.size == img.size
+    assert marks is None
+    assert flag is False
+
+
+def test_computer_upload_loads_drawing_editor():
+    img = Image.new("RGB", (app.MAX_EDITOR_SIDE * 2, app.MAX_EDITOR_SIDE), (20, 80, 180))
+    path = _save_png(img)
+    try:
+        result = app.handle_file_upload(path, None, app.MODE_COMPUTER)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel = result
+    assert "successfully" in _status_text(status).lower()
+    assert "draw" in _status_text(status).lower()
+    editor_img = _update_field(editor_update, "value")
+    assert max(editor_img.size) == app.MAX_EDITOR_SIDE
+    assert _update_field(editor_panel, "visible") is True
+    assert _update_field(uploaded_view, "visible") is False
+    assert app.decode_stored_image(stored).size == img.size
+    assert marks is None
+    assert flag is False
+
+
+def test_switch_to_computer_loads_editor_after_phone_upload():
+    img = _solid_image((80, 60))
+    encoded = app.encode_stored_image(img)
+    panel, editor, uploaded, status = app.handle_layout_change(app.MODE_COMPUTER, encoded)
+    assert _update_field(panel, "visible") is True
+    assert _update_field(editor, "visible") is True
+    assert _update_field(editor, "value") is not None
+    assert _update_field(uploaded, "visible") is False
+    assert "draw" in _status_text(status).lower()
+
+    panel, editor, uploaded, status = app.handle_layout_change(app.MODE_PHONE, encoded)
+    assert _update_field(panel, "visible") is False
+    assert _update_field(uploaded, "visible") is True
+    assert "not available on phones" in _status_text(status).lower()
+
+
+def test_blur_scales_preview_brush_onto_original():
+    original = _solid_image((200, 100), color=(8, 16, 32))
+    preview = original.resize((100, 50), Image.Resampling.NEAREST)
+    encoded = app.encode_stored_image(original)
+    result = app.handle_blur_click(
+        _editor(preview, [_brush_layer((100, 50), (4, 4, 14, 14))]),
+        encoded,
+        None,
+        False,
+        None,
+        app.DEFAULT_BLUR_STRENGTH,
+    )
+    output, status, _download, temp_id, *_rest = result
+    assert output is not None
+    assert "successfully" in _status_text(status).lower()
+    assert output.size == original.size
+    out_np = np.array(output.convert("RGB"))
+    src_np = np.array(original)
+    assert not np.array_equal(out_np[16, 16], src_np[16, 16])
+    assert np.array_equal(out_np[90, 180], src_np[90, 180])
+    app.remove_temp_file(temp_id)
+
+
 def test_stored_image_uses_rgb_when_opaque():
     img = Image.new("RGBA", (16, 16), (10, 20, 30, 255))
     encoded = app.encode_stored_image(img)
@@ -165,9 +328,21 @@ def test_validate_requires_original_and_matching_sizes():
     source, layers, error = app.validate_editor_payload(None, None)
     assert source is None and "expired" in error.lower()
 
+    source, layers, error = app.validate_editor_payload(None, encoded)
+    assert error is None
+    assert source.size == img.size
+    assert layers == []
+
     other = img.resize((32, 32))
     source, layers, error = app.validate_editor_payload(_editor(other), encoded)
     assert source is None and "match" in error.lower()
+
+    preview = img.resize((32, 24))
+    source, layers, error = app.validate_editor_payload(
+        _editor(preview, [_brush_layer((32, 24))]), encoded
+    )
+    assert error is None
+    assert source.size == img.size
 
     too_many = [_brush_layer(img.size) for _ in range(app.MAX_EDITOR_LAYERS + 1)]
     source, layers, error = app.validate_editor_payload(_editor(img, too_many), encoded)
@@ -206,6 +381,47 @@ def test_refuse_blur_when_suggestion_marks_missing():
     assert temp_id is None
     assert flag is True
     assert preview is not None
+
+
+def test_blur_without_editor_uses_suggestion_marks():
+    img = _solid_image((64, 64), color=(8, 16, 32))
+    encoded = app.encode_stored_image(img)
+    mask = np.zeros((64, 64), dtype=np.uint8)
+    mask[8:28, 8:28] = 1
+    result = app.handle_blur_click(
+        None,
+        encoded,
+        app.pack_marks(mask),
+        True,
+        None,
+        app.DEFAULT_BLUR_STRENGTH,
+    )
+    output, status, _download, temp_id, *_rest = result
+    assert output is not None
+    assert "successfully" in _status_text(status).lower()
+    out_np = np.array(output.convert("RGB"))
+    src_np = np.array(img)
+    assert not np.array_equal(out_np[mask == 1], src_np[mask == 1])
+    assert np.array_equal(out_np[mask == 0], src_np[mask == 0])
+    app.remove_temp_file(temp_id)
+
+
+def test_blur_screen_preview_is_smaller_than_download():
+    original = Image.new("RGB", (app.MAX_EDITOR_SIDE * 2, app.MAX_EDITOR_SIDE), (8, 16, 32))
+    encoded = app.encode_stored_image(original)
+    mask = np.zeros((original.height, original.width), dtype=np.uint8)
+    mask[10:40, 10:40] = 1
+    result = app.handle_blur_click(
+        None, encoded, app.pack_marks(mask), True, None, app.DEFAULT_BLUR_STRENGTH
+    )
+    output, status, _download, temp_id, *_rest = result
+    assert "successfully" in _status_text(status).lower()
+    assert max(output.size) == app.MAX_SCREEN_SIDE
+    with app._output_files_lock:
+        download_path = app._output_files[temp_id]
+    with Image.open(download_path) as saved:
+        assert saved.size == original.size
+    app.remove_temp_file(temp_id)
 
 
 def test_successful_blur_uses_suggestion_marks():
@@ -261,13 +477,13 @@ def test_upload_stores_compact_bytes_and_clears_marks():
     os.close(handle)
     try:
         img.save(path, "PNG")
-        result = app.handle_file_upload(path, None)
+        result = app.handle_file_upload(path, None, app.MODE_PHONE)
     finally:
         try:
             os.remove(path)
         except OSError:
             pass
-    _editor_update, status, _download, _output, temp_id, stored, marks, _preview, flag = result
+    _editor_update, status, _download, _output, temp_id, stored, marks, _preview, flag, _uploaded, _panel = result
     assert "successfully" in _status_text(status).lower()
     assert isinstance(stored, (bytes, bytearray))
     assert app.decode_stored_image(stored).size == img.size
@@ -284,7 +500,7 @@ def test_exercise_upload_suggest_blur_on_synthetic_image():
     os.close(handle)
     try:
         img.save(path, "PNG")
-        upload = app.handle_file_upload(path, None)
+        upload = app.handle_file_upload(path, None, app.MODE_PHONE)
     finally:
         try:
             os.remove(path)

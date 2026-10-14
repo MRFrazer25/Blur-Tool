@@ -126,6 +126,20 @@ MAX_BLUR_STRENGTH = 100
 DEFAULT_BLUR_STRENGTH = 50
 MAX_EDITOR_LAYERS = 10
 MAX_UPLOAD_FILE_SIZE = "25mb"
+# ImageEditor on phones reloads the tab if it has to hold a full camera photo or screenshot.
+# The editor gets a copy no wider/taller than this; blur still uses the original pixels.
+MAX_EDITOR_SIDE = 1280
+# On-screen previews (upload + result) stay smaller so phones can actually paint them.
+MAX_SCREEN_SIDE = 960
+MODE_PHONE = "Phone"
+MODE_COMPUTER = "Computer"
+PHONE_DRAWING_LIMITATION = (
+    "Drawing is not available on phones. Use Privacy Suggestions, then Apply Blur. "
+    "To draw by hand, switch to Computer on a desktop browser."
+)
+_PHONE_UA_MARKERS = (
+    "iphone", "ipod", "ipad", "android", "mobile", "webos", "blackberry", "iemobile", "opera mini",
+)
 
 # Resource limits for a public deployment
 MAX_QUEUED_REQUESTS = 20         # Further requests get a "busy" error instead of piling up
@@ -166,6 +180,62 @@ def encode_stored_image(img):
     buf = io.BytesIO()
     stored.save(buf, format="PNG")
     return buf.getvalue()
+
+def capped_preview(img, max_side):
+    """Smaller copy of img. Same aspect ratio; long side at most max_side."""
+    if img is None:
+        return None
+    width, height = img.size
+    long_side = max(width, height)
+    if long_side <= max_side:
+        return img
+    scale = max_side / float(long_side)
+    new_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+    return img.resize(new_size, Image.Resampling.LANCZOS)
+
+
+def editor_preview(img):
+    """Smaller copy for ImageEditor. Same aspect ratio; long side at most MAX_EDITOR_SIDE."""
+    return capped_preview(img, MAX_EDITOR_SIDE)
+
+
+def screen_preview(img):
+    """RGB copy for on-screen Image components. JPEG-safe and smaller than the editor copy."""
+    preview = capped_preview(img, MAX_SCREEN_SIDE)
+    if preview is None:
+        return None
+    if preview.mode in ("RGB", "L"):
+        return preview
+    return preview.convert("RGB")
+
+
+def is_phone_user_agent(user_agent):
+    """True when the browser string looks like a phone or tablet."""
+    if not user_agent:
+        return False
+    ua = user_agent.lower()
+    return any(marker in ua for marker in _PHONE_UA_MARKERS)
+
+
+def same_aspect(size_a, size_b, tol=0.02):
+    """True when two (width, height) sizes have about the same aspect ratio."""
+    width_a, height_a = size_a
+    width_b, height_b = size_b
+    if min(width_a, height_a, width_b, height_b) <= 0:
+        return False
+    return abs((width_a / height_a) - (width_b / height_b)) <= tol
+
+
+def scale_mask_to_image(mask, size):
+    """Resizes a 0/1 mask to (width, height) with nearest-neighbor so brush marks stay binary."""
+    width, height = size
+    if mask is None:
+        return None
+    if mask.shape == (height, width):
+        return mask
+    resized = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    return (resized > 0).astype(np.uint8)
+
 
 def decode_stored_image(data):
     """Rebuilds a PIL image from compact session bytes (or returns a PIL image unchanged)."""
@@ -234,9 +304,10 @@ def validate_editor_payload(editor_data, original_image):
             f"Please resize it to under {MAX_IMAGE_PIXELS // 1_000_000} megapixels."
         )
     if not editor_data or not isinstance(editor_data.get("background"), Image.Image):
-        return None, None, "Please upload and select an image first."
+        # Phone uploads never load the drawing editor. Suggestions and blur still work.
+        return source, [], None
     background = editor_data["background"]
-    if background.size != source.size:
+    if background.size != source.size and not same_aspect(background.size, source.size):
         return None, None, "The editor image does not match the uploaded image. Please upload again."
     layers = editor_data.get("layers") or []
     if not isinstance(layers, list):
@@ -244,7 +315,7 @@ def validate_editor_payload(editor_data, original_image):
     if len(layers) > MAX_EDITOR_LAYERS:
         return None, None, f"Too many drawing layers (maximum is {MAX_EDITOR_LAYERS})."
     for layer in layers:
-        if isinstance(layer, Image.Image) and layer.size != source.size:
+        if isinstance(layer, Image.Image) and layer.size != background.size:
             return None, None, "A drawing layer does not match the uploaded image size. Please upload again."
     return source, layers, None
 
@@ -381,11 +452,16 @@ def apply_gaussian_blur(image_np, mask_np_binary, blur_strength):
         return np.dstack((blended_rgb_np, alpha_channel_np))
     return blended_rgb_np
 
+def _upload_return(editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel):
+    """Shared 11-value return for upload/clear (editor last extra is the drawing-editor panel)."""
+    return (editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel)
+
+
 # Gradio Event Handlers
-def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
-    """Handles new file uploads, prepares image for editor, and cleans up old temp files.
-    Also returns the full-quality original, which is what gets blurred (the editor only
-    holds a compressed preview copy), and resets any saved Privacy Suggestions marks."""
+def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mode=MODE_PHONE):
+    """Handles new file uploads. Phone layout never loads ImageEditor (that reloads phones).
+    Computer layout loads a capped copy into the drawing editor, matching the desktop flow."""
+    computer = ui_mode == MODE_COMPUTER
     if uploaded_file_path:
         try:
             # Validate uploaded_file_path
@@ -393,7 +469,7 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
 
             if not is_within_temp_dir(resolved_upload_path):
                 logger.error(f"Security alert: Upload path '{uploaded_file_path}' resolves to '{resolved_upload_path}', which is outside the allowed temp directories. Aborting upload.")
-                return (
+                return _upload_return(
                     gr.update(),
                     gr.HTML("Invalid file path detected. Upload failed.", elem_classes="status-error"),
                     gr.DownloadButton(visible=False),
@@ -402,14 +478,16 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                     gr.skip(),
                     gr.skip(),
                     gr.skip(),
-                    gr.skip()
+                    gr.skip(),
+                    gr.skip(),
+                    gr.skip(),
                 )
             
             # Only decode PNG/JPEG regardless of file extension, and check size before decoding pixels
             with Image.open(resolved_upload_path, formats=ALLOWED_IMAGE_FORMATS) as opened_img:
                 if opened_img.width * opened_img.height > MAX_IMAGE_PIXELS:
                     logger.warning(f"Rejected upload of {opened_img.width}x{opened_img.height} image (over pixel limit).")
-                    return (
+                    return _upload_return(
                         gr.update(),
                         gr.HTML(f"Image is too large ({opened_img.width}x{opened_img.height}). Please resize it to under {MAX_IMAGE_PIXELS // 1_000_000} megapixels.", elem_classes="status-error"),
                         gr.DownloadButton(visible=False),
@@ -418,31 +496,55 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                         gr.skip(),
                         gr.skip(),
                         gr.skip(),
-                        gr.skip()
+                        gr.skip(),
+                        gr.skip(),
+                        gr.skip(),
                     )
                 # Apply camera rotation so phone photos are not shown sideways
                 img = ImageOps.exif_transpose(opened_img)
             stored_original = encode_stored_image(img)
-            display_img = decode_stored_image(stored_original)
+            source = decode_stored_image(stored_original)
             logger.info("Image loaded successfully.")
             
             # Clean up previous temporary file for download, if one exists
             remove_temp_file(current_temp_file_for_download)
 
-            return (
-                gr.update(value=display_img),
-                gr.HTML("Image loaded successfully! You can now draw on it or get AI suggestions.", elem_classes="status-success"),
+            if computer:
+                return _upload_return(
+                    gr.update(value=editor_preview(source), visible=True),
+                    gr.HTML(
+                        "Image loaded successfully! You can now draw on it or get AI suggestions.",
+                        elem_classes="status-success",
+                    ),
+                    gr.DownloadButton(visible=False),
+                    None,
+                    None,
+                    stored_original,
+                    None,
+                    gr.update(value=None, visible=False),
+                    False,
+                    gr.update(value=None, visible=False),
+                    gr.update(visible=True),
+                )
+            return _upload_return(
+                gr.skip(),
+                gr.HTML(
+                    "Image loaded successfully. " + PHONE_DRAWING_LIMITATION,
+                    elem_classes="status-success",
+                ),
                 gr.DownloadButton(visible=False),
                 None,
                 None,
                 stored_original,
-                None,  # New image: clear any saved marks
+                None,
                 gr.update(value=None, visible=False),
-                False
+                False,
+                gr.update(value=screen_preview(source), visible=True),
+                gr.update(visible=False),
             )
         except (UnidentifiedImageError, Image.DecompressionBombError) as e:
             logger.warning(f"Rejected uploaded file: {e}")
-            return (
+            return _upload_return(
                 gr.update(),
                 gr.HTML("Could not open this file. Please upload a valid PNG or JPG image under 40 megapixels.", elem_classes="status-error"),
                 gr.DownloadButton(visible=False),
@@ -451,12 +553,14 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 gr.skip(),
                 gr.skip(),
                 gr.skip(),
-                gr.skip()
+                gr.skip(),
+                gr.skip(),
+                gr.skip(),
             )
         except Exception as e:
             # Details are logged server-side only, so file paths are never shown to the user
             logger.error(f"Error processing uploaded file: {e}", exc_info=True)
-            return (
+            return _upload_return(
                 gr.update(),
                 gr.HTML("Error loading image. Please try a different file.", elem_classes="status-error"),
                 gr.DownloadButton(visible=False),
@@ -465,23 +569,27 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download):
                 gr.skip(),
                 gr.skip(),
                 gr.skip(),
-                gr.skip()
+                gr.skip(),
+                gr.skip(),
+                gr.skip(),
             )
     
     # Case: No file uploaded or file cleared - discard the result and any pending download.
     # The editor is left as-is: emptying it after drawing leaves the Gradio 6 editor stuck
     # loading, and the next upload replaces its contents anyway.
     remove_temp_file(current_temp_file_for_download)
-    return (
+    return _upload_return(
         gr.update(),
         gr.HTML("No file provided or file cleared.", elem_classes="status-info"),
         gr.DownloadButton(visible=False),
         None,
         None,
-        gr.skip(),  # Keep the original, marks and preview in sync with the editor, which is also left as-is
         gr.skip(),
         gr.skip(),
-        gr.skip()
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
     )
 
 def _blur_status_return(output_image, status_html, download_button, temp_id, preview_update=None, suggestions_flag=None):
@@ -524,7 +632,12 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
             True,
         )
 
-    final_mask_np_binary = layers_to_mask(layers_pil, source_pil.size)
+    background = editor_data.get("background") if editor_data else None
+    if isinstance(background, Image.Image):
+        final_mask_np_binary = layers_to_mask(layers_pil, background.size)
+        final_mask_np_binary = scale_mask_to_image(final_mask_np_binary, source_pil.size)
+    else:
+        final_mask_np_binary = np.zeros(mask_shape, dtype=np.uint8)
     if suggestion_marks is not None:
         final_mask_np_binary |= suggestion_marks
 
@@ -557,7 +670,7 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
         logger.info(f"Blurred image saved to temporary file for download: {new_temp_file_for_download_path}")
 
         return _blur_status_return(
-            blurred_image_pil,
+            screen_preview(blurred_image_pil),
             gr.HTML(
                 "Blur applied successfully! Download your privacy-protected image below. "
                 "The file is a new PNG without the original photo's location or camera data.",
@@ -711,7 +824,7 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
             gr.HTML(found_msg.format(n=found_count), elem_classes="status-success"),
             gr.DownloadButton(visible=False),
             marks,
-            gr.update(value=render_marks_preview(base_pil, preview_marks), visible=True),
+                gr.update(value=screen_preview(render_marks_preview(base_pil, preview_marks)), visible=True),
             True
         )
 
@@ -732,6 +845,56 @@ def handle_clear_marks():
         gr.HTML("Privacy Suggestions removed - those red areas will no longer be blurred. Your brush strokes are kept; use the editor's eraser or undo to remove them.", elem_classes="status-info"),
         None,
         False
+    )
+
+def handle_layout_change(ui_mode, original_image):
+    """Shows Computer drawing editor or Phone preview. Does not empty ImageEditor (that sticks Gradio 6)."""
+    source = decode_stored_image(original_image)
+    if ui_mode == MODE_COMPUTER:
+        editor = (
+            gr.update(value=editor_preview(source), visible=True)
+            if source is not None
+            else gr.update(visible=True)
+        )
+        return (
+            gr.update(visible=True),
+            editor,
+            gr.update(visible=False),
+            gr.HTML(
+                "Computer layout. Draw with the brush or use Privacy Suggestions, then Apply Blur.",
+                elem_classes="status-info",
+            ),
+        )
+    uploaded = (
+        gr.update(value=screen_preview(source), visible=True)
+        if source is not None
+        else gr.update(visible=False)
+    )
+    return (
+        gr.update(visible=False),
+        gr.skip(),
+        uploaded,
+        gr.HTML(PHONE_DRAWING_LIMITATION, elem_classes="status-info"),
+    )
+
+
+def detect_device_layout(request: gr.Request):
+    """Picks Phone or Computer from the browser user-agent on first load."""
+    user_agent = ""
+    if request is not None:
+        user_agent = request.headers.get("user-agent") or request.headers.get("User-Agent") or ""
+    if is_phone_user_agent(user_agent):
+        return (
+            MODE_PHONE,
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.HTML(PHONE_DRAWING_LIMITATION, elem_classes="status-info"),
+        )
+    return (
+        MODE_COMPUTER,
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.HTML("Ready. Upload an image to begin.", elem_classes="status-info status-bar"),
     )
 
 # Custom CSS for a cool looking dark theme
@@ -808,7 +971,20 @@ h1 {
     line-height: 1.4;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
-canvas {
+img {
+    max-width: 100%;
+    height: auto;
+}
+#drawing-editor-panel.hidden,
+#drawing-editor-panel[hidden] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+#drawing-editor-panel canvas {
     image-rendering: -webkit-optimize-contrast;
     image-rendering: crisp-edges;
     border-radius: 8px;
@@ -871,6 +1047,33 @@ def processing_location_line(on_space=None):
         )
     return "Images are processed on this computer and are not sent to another service."
 
+
+def how_to_use_markdown(on_space=None):
+    """How to Use accordion copy, including the phone drawing limitation."""
+    return f"""
+        **Quick Start Guide:**
+        
+        1. **Layout**: Phone is for upload, Privacy Suggestions, Apply Blur, and download. Computer is the drawing editor.
+        2. **Upload**: Click 'Upload Image' or drag & drop your JPG/PNG file
+        3. **Mark Areas**:
+           - **Phone**: {PHONE_DRAWING_LIMITATION}
+           - **Computer**: Draw with the brush, or pick what to detect and click 'Privacy Suggestions'
+        4. **Apply**: Adjust blur strength and click 'Apply Blur'
+        5. **Download**: Save your processed image
+        
+        **Pro Tips:**
+        - Use red brush for clear visibility on most images
+        - **Whole objects** marks people, vehicles, electronics and bags with boxes
+        - **Exact outlines** traces the shape of those objects, so less of the background gets blurred
+        - **Faces only** marks just people's faces - very small or turned-away faces can be missed
+        - License plates and text are not detected - mark those with the brush
+        - Suggestions appear in red in a preview below the editor; running them again (e.g. after switching mode) replaces them
+        - 'Remove Privacy Suggestions' deletes the suggested areas so they won't be blurred (your brush strokes stay)
+        - Higher blur values create stronger effects (the blur scales with image size, so large photos stay unreadable)
+        - If you wait a long time after Privacy Suggestions, Apply Blur will ask you to run them again rather than silently skip those areas
+        - {processing_location_line(on_space)}
+        """
+
 # delete_cache=(3600, 3600) deletes Gradio's cached uploads about an hour after
 # creation while this process is running, and again on a clean shutdown.
 # analytics_enabled=False stops Gradio from sending usage statistics.
@@ -888,28 +1091,7 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     
     # Collapsible instructions
     with gr.Accordion("How to Use", open=False):
-        gr.Markdown(f"""
-        **Quick Start Guide:**
-        
-        1. **Upload**: Click 'Upload Image' or drag & drop your JPG/PNG file
-        2. **Mark Areas**: Choose your method:
-           - **Manual**: Use brush tools to draw on areas you want blurred
-           - **AI Assist**: Pick what to detect, then click 'Privacy Suggestions' - uses YOLO26 AI to find privacy-sensitive areas automatically
-        3. **Apply**: Adjust blur strength and click 'Apply Blur'
-        4. **Download**: Save your processed image
-        
-        **Pro Tips:**
-        - Use red brush for clear visibility on most images
-        - **Whole objects** marks people, vehicles, electronics and bags with boxes
-        - **Exact outlines** traces the shape of those objects, so less of the background gets blurred
-        - **Faces only** marks just people's faces - very small or turned-away faces can be missed
-        - License plates and text are not detected - mark those with the brush
-        - Suggestions appear in red in a preview below the editor; running them again (e.g. after switching mode) replaces them
-        - 'Remove Privacy Suggestions' deletes the suggested areas so they won't be blurred (your brush strokes stay)
-        - Higher blur values create stronger effects (the blur scales with image size, so large photos stay unreadable)
-        - If you wait a long time after Privacy Suggestions, Apply Blur will ask you to run them again rather than silently skip those areas
-        - {processing_location_line()}
-        """)
+        gr.Markdown(how_to_use_markdown())
     
     # Status messages for user feedback (dynamic, including ready state)
     status_html = gr.HTML("Ready. Upload an image to begin.", elem_classes="status-info status-bar")
@@ -925,6 +1107,12 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     # server-side marks expire or the session is evicted.
     suggestions_pending = gr.Checkbox(value=False, visible=False, interactive=False, label="")
 
+    layout_radio = gr.Radio(
+        choices=[MODE_PHONE, MODE_COMPUTER],
+        value=MODE_PHONE,
+        label="Layout",
+    )
+
     with gr.Row():
         with gr.Column(scale=3): # Main interactive column
             gr.HTML("<div class='section-header'>Upload & Edit</div>")
@@ -935,20 +1123,30 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
                 file_types=[".png", ".jpg", ".jpeg"],
                 file_count="single"
             )
-            
-            image_editor = gr.ImageEditor(
-                label="Image Editor",
+
+            uploaded_view = gr.Image(
+                label="Uploaded Image",
+                interactive=False,
                 type="pil",
-                sources=[],
-                interactive=True,
-                brush=gr.Brush(
-                    default_size=25, 
-                    colors=["#FF0000", "#0066CC"], 
-                    color_mode="fixed"
-                ),
-                eraser=gr.Eraser(default_size=25),
-                canvas_size=(800, 600)
+                format="jpeg",
+                height=420,
+                visible=False,
             )
+
+            with gr.Column(visible=False, elem_id="drawing-editor-panel") as editor_panel:
+                image_editor = gr.ImageEditor(
+                    label="Image Editor",
+                    type="pil",
+                    sources=[],
+                    interactive=True,
+                    brush=gr.Brush(
+                        default_size=25,
+                        colors=["#FF0000", "#0066CC"],
+                        color_mode="fixed"
+                    ),
+                    eraser=gr.Eraser(default_size=25),
+                    canvas_size=(800, 600),
+                )
 
             marks_preview = gr.Image(
                 label="Privacy Suggestions Preview (red areas will be blurred along with your brush strokes)",
@@ -989,26 +1187,37 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
             gr.HTML("<div class='section-header'>Results</div>")
             
             output_image = gr.Image(
-                label="Processed Image", 
+                label="Processed Image",
                 interactive=False,
                 type="pil",
-                format="png"
+                format="jpeg",
+                height=420,
             )
             
             download_button = gr.DownloadButton("Download Blurred Image", visible=False, size="lg")
         
     gr.Markdown(privacy_notice_html())
     
+    demo.load(
+        fn=detect_device_layout,
+        inputs=None,
+        outputs=[layout_radio, editor_panel, uploaded_view, status_html],
+    )
+    layout_radio.change(
+        fn=handle_layout_change,
+        inputs=[layout_radio, original_image_state],
+        outputs=[editor_panel, image_editor, uploaded_view, status_html],
+    )
     # File uploader actions
     file_uploader.upload(
         fn=handle_file_upload,
-        inputs=[file_uploader, temp_file_path_for_download_state],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending]
+        inputs=[file_uploader, temp_file_path_for_download_state, layout_radio],
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel]
     )
     file_uploader.clear(
         fn=handle_file_upload,
-        inputs=[file_uploader, temp_file_path_for_download_state],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending]
+        inputs=[file_uploader, temp_file_path_for_download_state, layout_radio],
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel]
     )
     
     # Blur button actions
