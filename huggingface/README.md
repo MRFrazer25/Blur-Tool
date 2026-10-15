@@ -18,6 +18,7 @@ An intelligent image privacy application combining manual drawing tools with AI-
 ## Features
 
 * **Intelligent Drawing Interface:** Brush tools with customizable size and color for precise area marking
+* **Tap to Mark on Phones:** On the Phone layout, tap the photo to mark areas to blur, with adjustable circle size, undo and clear
 * **AI Privacy Suggestions:** YOLO26 finds privacy-sensitive areas for you, as whole-object boxes, exact outlines, or faces only
 * **Hosted on Hugging Face Spaces:** The page opens in your browser. Blur and YOLO run on the Space server, so the photo is uploaded there
 * **Real-Time Preview:** Instant blur application with adjustable strength (10–100) that scales with image size
@@ -52,7 +53,7 @@ Suggestions appear in a preview below the editor, and Apply Blur blurs them toge
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and refresh the page. Chrome generally provides the best compatibility.
 * **Image Too Large:** Uploads are limited to 25 MB and 40 megapixels. Resize larger images before uploading.
-* **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise. The drawing editor does not work on phones. Use the Phone layout (Privacy Suggestions, Apply Blur, download) or open the page on a computer and choose Computer to draw.
+* **Drawing Tools Not Working:** Some browsers (such as older Firefox or mobile browsers) may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge if issues arise. On phones, the Phone layout replaces the drawing editor (which phones can't run) with tap-to-mark: tap the photo to mark a circle to blur, set its size with Tap Mark Size, and use Undo Last Tap or Clear Taps to fix mistakes. Privacy Suggestions, Apply Blur and download work the same. For freehand drawing, open the page on a computer and choose Computer.
 * **AI Suggestions Unavailable:** Each YOLO26 model (about 20 MB total) downloads from Ultralytics the first time that suggestion mode is used. That download is the model, not your photo. If suggestions fail, wait a moment and try again, or mark areas manually.
 * **Blur Not Applied:** Ensure you have drawn areas or used AI suggestions before clicking "Apply Blur."
 * **Slow Response on Large Images:** For very high-resolution uploads, try resizing locally (for example, to 1920×1080) before uploading to improve responsiveness.

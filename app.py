@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import logging
+import math
 import secrets
 import threading
 import time
@@ -134,9 +135,14 @@ MAX_SCREEN_SIDE = 960
 MODE_PHONE = "Phone"
 MODE_COMPUTER = "Computer"
 PHONE_DRAWING_LIMITATION = (
-    "Drawing is not available on phones. Use Privacy Suggestions, then Apply Blur. "
-    "To draw by hand, switch to Computer on a desktop browser."
+    "On phones, tap the photo to mark areas to blur (each tap marks a circle; set its size with "
+    "Tap Mark Size). Privacy Suggestions also work. Freehand drawing needs the Computer layout."
 )
+# Phone layout: tapping marks round areas instead of the drawing editor, which reloads phone tabs.
+MIN_TAP_SIZE = 3        # Tap circle diameter, as a percent of the photo's shorter side
+MAX_TAP_SIZE = 30
+DEFAULT_TAP_SIZE = 15
+MAX_TAP_MARKS = 200
 _PHONE_UA_MARKERS = (
     "iphone", "ipod", "ipad", "android", "mobile", "webos", "blackberry", "iemobile", "opera mini",
 )
@@ -211,6 +217,51 @@ def screen_preview(img):
     if preview.mode in ("RGB", "L"):
         return preview
     return preview.convert("RGB")
+
+
+def screen_size(size):
+    """(width, height) of screen_preview for an image of this size."""
+    width, height = size
+    long_side = max(width, height)
+    if long_side <= MAX_SCREEN_SIDE:
+        return width, height
+    scale = MAX_SCREEN_SIDE / float(long_side)
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+def normalize_tap_marks(taps):
+    """Validated list of (x, y, radius) tuples in original-image pixels; [] if missing or malformed."""
+    if not isinstance(taps, (list, tuple)):
+        return []
+    clean = []
+    for tap in list(taps)[:MAX_TAP_MARKS]:
+        try:
+            x, y, radius = (float(v) for v in tap)
+        except (TypeError, ValueError):
+            continue
+        if radius > 0 and all(math.isfinite(v) for v in (x, y, radius)):
+            clean.append((x, y, radius))
+    return clean
+
+
+def taps_to_mask(taps, size):
+    """0/1 mask of (width, height) with a filled circle for each tap."""
+    width, height = size
+    mask = np.zeros((height, width), dtype=np.uint8)
+    for x, y, radius in normalize_tap_marks(taps):
+        cv2.circle(mask, (int(round(x)), int(round(y))), max(1, int(round(radius))), 1, thickness=-1)
+    return mask
+
+
+def tap_view(source, taps):
+    """Phone preview of the photo with tapped areas tinted red (drawn at preview size)."""
+    preview = screen_preview(source)
+    taps = normalize_tap_marks(taps)
+    if preview is None or not taps:
+        return preview
+    scale = preview.width / float(source.width)
+    scaled = [(x * scale, y * scale, r * scale) for x, y, r in taps]
+    return render_marks_preview(preview, taps_to_mask(scaled, preview.size)).convert("RGB")
 
 
 def is_phone_user_agent(user_agent):
@@ -462,9 +513,9 @@ def apply_gaussian_blur(image_np, mask_np_binary, blur_strength):
         return np.dstack((blended_rgb_np, alpha_channel_np))
     return blended_rgb_np
 
-def _upload_return(editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel, editor_synced):
-    """Shared 12-value return for upload/clear, in the order of the upload event's outputs."""
-    return (editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel, editor_synced)
+def _upload_return(editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel, editor_synced, taps):
+    """Shared 13-value return for upload/clear, in the order of the upload event's outputs."""
+    return (editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel, editor_synced, taps)
 
 def _upload_error(message, current_temp_file_for_download, css_class="status-error"):
     """Upload/clear return that only shows a message: keeps the current image, marks and editor."""
@@ -474,7 +525,7 @@ def _upload_error(message, current_temp_file_for_download, css_class="status-err
         gr.DownloadButton(visible=False),
         None,
         current_temp_file_for_download,
-        *([gr.skip()] * 7),
+        *([gr.skip()] * 8),
     )
 
 
@@ -528,6 +579,7 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mo
                     gr.update(value=None, visible=False),
                     gr.update(visible=True),
                     True,  # The editor now holds this upload
+                    [],  # New image: clear phone taps
                 )
             return _upload_return(
                 gr.skip(),
@@ -542,9 +594,10 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mo
                 None,
                 gr.update(value=None, visible=False),
                 False,
-                gr.update(value=screen_preview(source), visible=True),
+                gr.update(value=tap_view(source, []), visible=True),
                 gr.update(visible=False),
                 False,  # The hidden editor still holds any earlier image: ignore it
+                [],  # New image: clear phone taps
             )
         except (UnidentifiedImageError, Image.DecompressionBombError) as e:
             logger.warning(f"Rejected uploaded file: {e}")
@@ -565,9 +618,9 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mo
 
 def _blur_status_return(output_image, status_html, download_button, temp_id, preview_update=None, suggestions_flag=None, refreshed_state=None):
     """Shared return shape for Apply Blur (includes preview + client suggestion flag).
-    refreshed_state = (original, marks, editor_synced) re-saves those values so their
+    refreshed_state = (original, marks, editor_synced, taps) re-saves those values so their
     30-minute expiry restarts while the session is in use."""
-    original, marks, editor_synced = refreshed_state if refreshed_state is not None else (gr.skip(),) * 3
+    original, marks, editor_synced, taps = refreshed_state if refreshed_state is not None else (gr.skip(),) * 4
     return (
         output_image,
         status_html,
@@ -578,10 +631,11 @@ def _blur_status_return(output_image, status_html, download_button, temp_id, pre
         original,
         marks,
         editor_synced,
+        taps,
     )
 
-def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pending, current_temp_file_for_download, blur_strength_slider_value, editor_synced=None):
-    """Applies blur to the marked areas (editor brush strokes plus saved Privacy Suggestions marks)
+def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pending, current_temp_file_for_download, blur_strength_slider_value, editor_synced=None, tap_marks=None):
+    """Applies blur to the marked areas (editor brush strokes, phone taps, and saved Privacy Suggestions marks)
     and prepares the result for download. Uses the validated original upload, never the
     editor background as a fallback. Refuses if suggestions were requested but the
     server-side marks have expired or been evicted."""
@@ -628,11 +682,12 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
         final_mask_np_binary = np.zeros(mask_shape, dtype=np.uint8)
     if suggestion_marks is not None:
         final_mask_np_binary |= suggestion_marks
+    final_mask_np_binary |= taps_to_mask(tap_marks, source_pil.size)
 
     if np.sum(final_mask_np_binary) == 0:
         return _blur_status_return(
             None,
-            gr.HTML("No areas marked for blurring. Use the brush tools or AI suggestions first.", elem_classes="status-info"),
+            gr.HTML("No areas marked for blurring. Draw or tap on the photo, or use Privacy Suggestions first.", elem_classes="status-info"),
             gr.DownloadButton(visible=False),
             current_temp_file_for_download,
         )
@@ -666,7 +721,12 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
             ),
             gr.DownloadButton(value=new_temp_file_for_download_path, visible=True, label="Download Blurred Image"),
             register_output_file(new_temp_file_for_download_path),
-            refreshed_state=(original_image, saved_marks, editor_synced if editor_synced is not None else gr.skip()),
+            refreshed_state=(
+                original_image,
+                saved_marks,
+                editor_synced if editor_synced is not None else gr.skip(),
+                tap_marks if tap_marks is not None else gr.skip(),
+            ),
         )
     except Exception as e:
         logger.error(f"Error saving blurred image to temp file: {e}", exc_info=True)
@@ -843,8 +903,65 @@ def handle_clear_marks():
         False
     )
 
-def handle_layout_change(ui_mode, original_image):
-    """Shows Computer drawing editor or Phone preview. Does not empty ImageEditor (that sticks Gradio 6)."""
+def _tap_result(source, taps, message, css_class="status-info"):
+    """(phone preview update, tap marks, status) for the tap handlers."""
+    return gr.update(value=tap_view(source, taps)), taps, gr.HTML(message, elem_classes=css_class)
+
+
+def _tap_count_message(taps):
+    if not taps:
+        return "No tapped areas. Tap the photo to mark areas to blur."
+    return f"{len(taps)} tapped area(s) marked in red. Tap more, or press Apply Blur."
+
+
+def handle_phone_tap(original_image, tap_marks, tap_size, evt: gr.SelectData):
+    """Phone layout: adds a round mark where the user tapped the photo."""
+    source = decode_stored_image(original_image)
+    if source is None:
+        return gr.skip(), gr.skip(), gr.HTML("Session expired — please upload the image again.", elem_classes="status-error")
+    try:
+        tap_x, tap_y = float(evt.index[0]), float(evt.index[1])
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return gr.skip(), gr.skip(), gr.HTML("Could not read where you tapped. Please try again.", elem_classes="status-error")
+    taps = normalize_tap_marks(tap_marks)
+    if len(taps) >= MAX_TAP_MARKS:
+        return gr.skip(), gr.skip(), gr.HTML(
+            f"You can mark up to {MAX_TAP_MARKS} areas. Use a bigger Tap Mark Size or Undo Last Tap.",
+            elem_classes="status-error",
+        )
+    # The tap is in screen-preview pixels; map it back to the original photo
+    preview_width, preview_height = screen_size(source.size)
+    x = min(max(tap_x * source.width / preview_width, 0), source.width - 1)
+    y = min(max(tap_y * source.height / preview_height, 0), source.height - 1)
+    try:
+        size_percent = min(max(float(tap_size), MIN_TAP_SIZE), MAX_TAP_SIZE)
+    except (TypeError, ValueError):
+        size_percent = DEFAULT_TAP_SIZE
+    radius = size_percent / 100.0 * min(source.width, source.height) / 2.0
+    taps.append((x, y, radius))
+    return _tap_result(source, taps, _tap_count_message(taps))
+
+
+def handle_undo_tap(original_image, tap_marks):
+    """Phone layout: removes the most recent tap."""
+    source = decode_stored_image(original_image)
+    if source is None:
+        return gr.skip(), gr.skip(), gr.HTML("Session expired — please upload the image again.", elem_classes="status-error")
+    taps = normalize_tap_marks(tap_marks)[:-1]
+    return _tap_result(source, taps, _tap_count_message(taps))
+
+
+def handle_clear_taps(original_image):
+    """Phone layout: removes every tap."""
+    source = decode_stored_image(original_image)
+    if source is None:
+        return gr.skip(), [], gr.HTML("Taps cleared.", elem_classes="status-info")
+    return _tap_result(source, [], "Taps cleared. Tap the photo to mark areas to blur.")
+
+
+def handle_layout_change(ui_mode, original_image, tap_marks=None):
+    """Shows Computer drawing editor or Phone tap preview. Does not empty ImageEditor (that sticks Gradio 6).
+    Returns (editor panel, editor, phone preview, status, editor-in-sync flag, phone tools)."""
     source = decode_stored_image(original_image)
     if ui_mode == MODE_COMPUTER:
         editor = (
@@ -861,9 +978,10 @@ def handle_layout_change(ui_mode, original_image):
                 elem_classes="status-info",
             ),
             True if source is not None else gr.skip(),  # Editor reloaded with the current upload
+            gr.update(visible=False),
         )
     uploaded = (
-        gr.update(value=screen_preview(source), visible=True)
+        gr.update(value=tap_view(source, tap_marks), visible=True)
         if source is not None
         else gr.update(visible=False)
     )
@@ -873,6 +991,7 @@ def handle_layout_change(ui_mode, original_image):
         uploaded,
         gr.HTML(PHONE_DRAWING_LIMITATION, elem_classes="status-info"),
         gr.skip(),  # Editor keeps the current upload's strokes
+        gr.update(visible=True),
     )
 
 
@@ -887,12 +1006,14 @@ def detect_device_layout(request: gr.Request):
             gr.update(visible=False),
             gr.update(visible=False),
             gr.HTML(PHONE_DRAWING_LIMITATION, elem_classes="status-info"),
+            gr.update(visible=True),
         )
     return (
         MODE_COMPUTER,
         gr.update(visible=True),
         gr.update(visible=False),
         gr.HTML("Ready. Upload an image to begin.", elem_classes="status-info status-bar"),
+        gr.update(visible=False),
     )
 
 # Custom CSS for a cool looking dark theme
@@ -1051,11 +1172,12 @@ def how_to_use_markdown(on_space=None):
     return f"""
         **Quick Start Guide:**
         
-        1. **Layout**: Phone is for upload, Privacy Suggestions, Apply Blur, and download. Computer is the drawing editor.
+        1. **Layout**: Phone marks areas by tapping the photo. Computer has the freehand drawing editor.
         2. **Upload**: Click 'Upload Image' or drag & drop your JPG/PNG file
         3. **Mark Areas**:
            - **Phone**: {PHONE_DRAWING_LIMITATION}
            - **Computer**: Draw with the brush, or pick what to detect and click 'Privacy Suggestions'
+           - **Both**: Tapped areas, brush strokes, and Privacy Suggestions are all blurred together
         4. **Apply**: Adjust blur strength and click 'Apply Blur'
         5. **Download**: Save your processed image
         
@@ -1108,6 +1230,8 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     # Whether the drawing editor holds the current upload (False after a Phone-layout upload,
     # when the hidden editor may still hold an older image and its brush strokes).
     editor_synced_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
+    # Phone layout taps: list of (x, y, radius) circles in original-image pixels.
+    tap_marks_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
 
     layout_radio = gr.Radio(
         choices=[MODE_PHONE, MODE_COMPUTER],
@@ -1127,13 +1251,25 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
             )
 
             uploaded_view = gr.Image(
-                label="Uploaded Image",
+                label="Uploaded Image (tap to mark areas to blur)",
                 interactive=False,
                 type="pil",
                 format="jpeg",
                 height=420,
                 visible=False,
             )
+
+            with gr.Column(visible=False) as phone_tools:
+                tap_size_slider = gr.Slider(
+                    minimum=MIN_TAP_SIZE,
+                    maximum=MAX_TAP_SIZE,
+                    value=DEFAULT_TAP_SIZE,
+                    step=1,
+                    label="Tap Mark Size (% of photo)",
+                )
+                with gr.Row():
+                    undo_tap_button = gr.Button("Undo Last Tap", size="sm", variant="secondary")
+                    clear_taps_button = gr.Button("Clear Taps", size="sm", variant="secondary")
 
             with gr.Column(visible=False, elem_id="drawing-editor-panel") as editor_panel:
                 image_editor = gr.ImageEditor(
@@ -1203,30 +1339,46 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     demo.load(
         fn=detect_device_layout,
         inputs=None,
-        outputs=[layout_radio, editor_panel, uploaded_view, status_html],
+        outputs=[layout_radio, editor_panel, uploaded_view, status_html, phone_tools],
     )
     layout_radio.change(
         fn=handle_layout_change,
-        inputs=[layout_radio, original_image_state],
-        outputs=[editor_panel, image_editor, uploaded_view, status_html, editor_synced_state],
+        inputs=[layout_radio, original_image_state, tap_marks_state],
+        outputs=[editor_panel, image_editor, uploaded_view, status_html, editor_synced_state, phone_tools],
+    )
+    # Phone layout: tap the photo to mark areas
+    uploaded_view.select(
+        fn=handle_phone_tap,
+        inputs=[original_image_state, tap_marks_state, tap_size_slider],
+        outputs=[uploaded_view, tap_marks_state, status_html],
+    )
+    undo_tap_button.click(
+        fn=handle_undo_tap,
+        inputs=[original_image_state, tap_marks_state],
+        outputs=[uploaded_view, tap_marks_state, status_html],
+    )
+    clear_taps_button.click(
+        fn=handle_clear_taps,
+        inputs=[original_image_state],
+        outputs=[uploaded_view, tap_marks_state, status_html],
     )
     # File uploader actions
     file_uploader.upload(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state, layout_radio],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel, editor_synced_state]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel, editor_synced_state, tap_marks_state]
     )
     file_uploader.clear(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state, layout_radio],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel, editor_synced_state]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel, editor_synced_state, tap_marks_state]
     )
     
     # Blur button actions
     blur_button.click(
         fn=handle_blur_click,
-        inputs=[image_editor, original_image_state, marks_state, suggestions_pending, temp_file_path_for_download_state, blur_strength_slider, editor_synced_state],
-        outputs=[output_image, status_html, download_button, temp_file_path_for_download_state, marks_preview, suggestions_pending, original_image_state, marks_state, editor_synced_state]
+        inputs=[image_editor, original_image_state, marks_state, suggestions_pending, temp_file_path_for_download_state, blur_strength_slider, editor_synced_state, tap_marks_state],
+        outputs=[output_image, status_html, download_button, temp_file_path_for_download_state, marks_preview, suggestions_pending, original_image_state, marks_state, editor_synced_state, tap_marks_state]
     )
     
     # Suggest button actions

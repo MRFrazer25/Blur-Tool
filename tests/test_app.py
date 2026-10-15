@@ -187,27 +187,29 @@ def test_detect_device_layout_picks_phone_or_computer():
         def __init__(self, ua):
             self.headers = {"user-agent": ua}
 
-    phone_mode, editor_panel, uploaded, status = app.detect_device_layout(
+    phone_mode, editor_panel, uploaded, status, phone_tools = app.detect_device_layout(
         _Request("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")
     )
     assert phone_mode == app.MODE_PHONE
     assert _update_field(editor_panel, "visible") is False
-    assert "not available on phones" in _status_text(status).lower()
+    assert _update_field(phone_tools, "visible") is True
+    assert "tap the photo" in _status_text(status).lower()
 
-    computer_mode, editor_panel, uploaded, status = app.detect_device_layout(
+    computer_mode, editor_panel, uploaded, status, phone_tools = app.detect_device_layout(
         _Request("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0")
     )
     assert computer_mode == app.MODE_COMPUTER
     assert _update_field(editor_panel, "visible") is True
+    assert _update_field(phone_tools, "visible") is False
     assert "ready" in _status_text(status).lower()
 
 
 def test_drawing_limitation_is_stated():
     text = app.PHONE_DRAWING_LIMITATION.lower()
-    assert "not available on phones" in text
+    assert "tap the photo" in text
     assert "privacy suggestions" in text
     how_to = app.how_to_use_markdown()
-    assert "not available on phones" in how_to.lower()
+    assert "tap" in how_to.lower()
     assert app.MODE_PHONE in how_to or "Phone" in how_to
 
 
@@ -221,7 +223,7 @@ def test_phone_upload_shows_preview_and_skips_editor():
             os.remove(path)
         except OSError:
             pass
-    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel, editor_synced = result
+    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel, editor_synced, taps = result
     assert "successfully" in _status_text(status).lower()
     assert "computer" in _status_text(status).lower() or "phone" in _status_text(status).lower()
     display = _update_field(uploaded_view, "value")
@@ -244,7 +246,7 @@ def test_computer_upload_loads_drawing_editor():
             os.remove(path)
         except OSError:
             pass
-    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel, editor_synced = result
+    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel, editor_synced, taps = result
     assert "successfully" in _status_text(status).lower()
     assert "draw" in _status_text(status).lower()
     editor_img = _update_field(editor_update, "value")
@@ -259,17 +261,17 @@ def test_computer_upload_loads_drawing_editor():
 def test_switch_to_computer_loads_editor_after_phone_upload():
     img = _solid_image((80, 60))
     encoded = app.encode_stored_image(img)
-    panel, editor, uploaded, status, editor_synced = app.handle_layout_change(app.MODE_COMPUTER, encoded)
+    panel, editor, uploaded, status, editor_synced, phone_tools = app.handle_layout_change(app.MODE_COMPUTER, encoded)
     assert _update_field(panel, "visible") is True
     assert _update_field(editor, "visible") is True
     assert _update_field(editor, "value") is not None
     assert _update_field(uploaded, "visible") is False
     assert "draw" in _status_text(status).lower()
 
-    panel, editor, uploaded, status, editor_synced = app.handle_layout_change(app.MODE_PHONE, encoded)
+    panel, editor, uploaded, status, editor_synced, phone_tools = app.handle_layout_change(app.MODE_PHONE, encoded)
     assert _update_field(panel, "visible") is False
     assert _update_field(uploaded, "visible") is True
-    assert "not available on phones" in _status_text(status).lower()
+    assert "tap the photo" in _status_text(status).lower()
 
 
 def test_blur_scales_preview_brush_onto_original():
@@ -483,7 +485,8 @@ def test_upload_stores_compact_bytes_and_clears_marks():
             os.remove(path)
         except OSError:
             pass
-    _editor_update, status, _download, _output, temp_id, stored, marks, _preview, flag, _uploaded, _panel, _editor_synced = result
+    _editor_update, status, _download, _output, temp_id, stored, marks, _preview, flag, _uploaded, _panel, _editor_synced, taps = result
+    assert taps == []
     assert "successfully" in _status_text(status).lower()
     assert isinstance(stored, (bytes, bytearray))
     assert app.decode_stored_image(stored).size == img.size
@@ -560,10 +563,8 @@ def test_upload_and_layout_record_whether_editor_holds_the_upload():
     assert _upload(img, app.MODE_COMPUTER)[11] is True
     phone = _upload(img, app.MODE_PHONE)
     assert phone[11] is False
-    *_rest, synced = app.handle_layout_change(app.MODE_COMPUTER, phone[5])
-    assert synced is True
-    *_rest, synced = app.handle_layout_change(app.MODE_PHONE, phone[5])
-    assert synced == app.gr.skip()
+    assert app.handle_layout_change(app.MODE_COMPUTER, phone[5])[4] is True
+    assert app.handle_layout_change(app.MODE_PHONE, phone[5])[4] == app.gr.skip()
 
 
 def test_phone_upload_ignores_strokes_left_in_hidden_editor():
@@ -634,3 +635,84 @@ def test_transparent_palette_and_grayscale_pngs_keep_transparency():
 
 def test_session_cap_leaves_room_for_passive_visitors():
     assert app.MAX_STORED_SESSIONS >= 100
+
+
+class _Tap:
+    """Stand-in for gr.SelectData: index is the tapped (x, y) in screen-preview pixels."""
+    def __init__(self, x, y):
+        self.index = [x, y]
+
+
+def test_phone_tap_maps_preview_pixels_to_the_original_photo():
+    big = Image.new("RGB", (2000, 1000), (40, 90, 160))
+    stored = app.encode_stored_image(big)
+    preview_w, preview_h = app.screen_size(big.size)
+    assert (preview_w, preview_h) == (960, 480)
+
+    view, taps, status = app.handle_phone_tap(stored, None, 10, _Tap(480, 240))
+    assert len(taps) == 1
+    x, y, radius = taps[0]
+    assert abs(x - 1000) < 3 and abs(y - 500) < 3      # Preview center -> photo center
+    assert abs(radius - 50) < 1                         # 10% of the 1000 px short side, as a diameter
+    assert "1 tapped area" in _status_text(status).lower()
+    shown = _update_field(view, "value")
+    assert shown.size == (preview_w, preview_h)         # Same size, so later taps map the same way
+    assert shown.getpixel((480, 240))[0] > 100          # Tinted red where tapped
+
+    _view, taps, _status = app.handle_phone_tap(stored, taps, 10, _Tap(5000, -20))
+    x, y, _r = taps[1]
+    assert x == 1999 and y == 0                         # Off-image taps are clamped onto the photo
+
+
+def test_phone_tap_size_is_clamped_and_bad_input_rejected():
+    img = _solid_image((200, 100))
+    stored = app.encode_stored_image(img)
+    _v, taps, _s = app.handle_phone_tap(stored, None, 999, _Tap(10, 10))
+    assert abs(taps[0][2] - app.MAX_TAP_SIZE / 100 * 100 / 2) < 0.01
+    _v, taps, _s = app.handle_phone_tap(stored, None, "abc", _Tap(10, 10))
+    assert abs(taps[0][2] - app.DEFAULT_TAP_SIZE / 100 * 100 / 2) < 0.01
+    view, taps, status = app.handle_phone_tap(None, None, 10, _Tap(10, 10))
+    assert "expired" in _status_text(status).lower()
+    view, taps, status = app.handle_phone_tap(stored, None, 10, object())
+    assert "could not read" in _status_text(status).lower()
+
+
+def test_undo_and_clear_taps():
+    img = _solid_image((200, 100))
+    stored = app.encode_stored_image(img)
+    taps = [(10.0, 10.0, 5.0), (50.0, 50.0, 5.0)]
+    _v, after_undo, status = app.handle_undo_tap(stored, taps)
+    assert after_undo == [(10.0, 10.0, 5.0)]
+    assert "1 tapped area" in _status_text(status).lower()
+    _v, cleared, status = app.handle_clear_taps(stored)
+    assert cleared == []
+    assert "cleared" in _status_text(status).lower()
+
+
+def test_blur_uses_phone_taps():
+    img = Image.new("RGB", (200, 100), (0, 0, 0))
+    ImageDraw.Draw(img).rectangle([90, 0, 110, 100], fill=(255, 255, 255))   # Sharp edge to blur
+    stored = app.encode_stored_image(img)
+    taps = [(100.0, 50.0, 30.0)]
+    result = app.handle_blur_click(None, stored, None, False, None, app.DEFAULT_BLUR_STRENGTH, False, taps)
+    assert result[0] is not None
+    assert result[9] == taps                                                 # Re-saved with the session
+    blurred = np.array(Image.open(app._output_files[result[3]]).convert("L")).astype(int)
+    original = np.array(img.convert("L")).astype(int)
+    assert (blurred[50, 85:95] != original[50, 85:95]).any()                 # Inside the tap: changed
+    assert (blurred[50, 0:40] == original[50, 0:40]).all()                   # Far from the tap: unchanged
+    app.remove_temp_file(result[3])
+
+    # Malformed tap data is ignored rather than crashing
+    junk = app.handle_blur_click(None, stored, None, False, None, app.DEFAULT_BLUR_STRENGTH, False, ["x", (1, 2), None])
+    assert "no areas marked" in _status_text(junk[1]).lower()
+
+
+def test_layout_switch_shows_taps_on_phone():
+    img = _solid_image((200, 100))
+    stored = app.encode_stored_image(img)
+    phone = app.handle_layout_change(app.MODE_PHONE, stored, [(100.0, 50.0, 20.0)])
+    assert _update_field(phone[5], "visible") is True
+    assert _update_field(phone[2], "value").getpixel((100, 50))[0] > 100
+    computer = app.handle_layout_change(app.MODE_COMPUTER, stored, [(100.0, 50.0, 20.0)])
+    assert _update_field(computer[5], "visible") is False

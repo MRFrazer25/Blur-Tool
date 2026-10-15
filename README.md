@@ -7,6 +7,7 @@ An intelligent image privacy application that combines manual drawing tools with
 ## Features
 
 * **Intelligent Drawing Interface:** Advanced brush tools with customizable size and color for precise area marking
+* **Tap to Mark on Phones:** On the Phone layout, tap the photo to mark areas to blur, with adjustable circle size, undo and clear
 * **AI Privacy Suggestions:** YOLO26 finds privacy-sensitive areas for you, as whole-object boxes, exact outlines, or faces only
 * **Local Processing:** When run locally, images never leave your machine
 * **Real-Time Preview:** Instant blur application with adjustable strength (10–100) that scales with image size
@@ -92,7 +93,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 
 * **Image Upload Issues:** Verify file format (JPG/PNG) and try different browser. Chrome provides best compatibility.
 * **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge for full functionality.
-* **Drawing on a phone:** The drawing editor does not work on phones. Use the Phone layout (Privacy Suggestions, Apply Blur, download) or open the page on a computer and choose Computer to draw.
+* **Marking areas on a phone:** On phones, the Phone layout replaces the drawing editor (which phones can't run) with tap-to-mark: tap the photo to mark a circle to blur, set its size with Tap Mark Size, and use Undo Last Tap or Clear Taps to fix mistakes. Privacy Suggestions, Apply Blur and download work the same. For freehand drawing, open the page on a computer and choose Computer.
 * **AI Suggestions Unavailable:** Check internet connection for initial YOLO26 model downloads (three small models, about 20 MB total). Manual drawing tools will still work offline.
 * **Application Won't Start:** Ensure Python 3.10+ and run `pip install -U -r requirements.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
 * **Image Too Large:** Images over 40 megapixels are rejected. Resize them before uploading
