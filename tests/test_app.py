@@ -110,7 +110,7 @@ def test_stored_and_download_pngs_drop_jpeg_exif():
         source = app.decode_stored_image(stored)
         mask = np.zeros((source.height, source.width), dtype=np.uint8)
         mask[4:20, 4:20] = 1
-        output, _status, _download, temp_id, _preview, _flag = app.handle_blur_click(
+        output, _status, _download, temp_id, _preview, _flag, *_refreshed = app.handle_blur_click(
             _editor(source),
             stored,
             app.pack_marks(mask),
@@ -221,7 +221,7 @@ def test_phone_upload_shows_preview_and_skips_editor():
             os.remove(path)
         except OSError:
             pass
-    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel = result
+    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel, editor_synced = result
     assert "successfully" in _status_text(status).lower()
     assert "computer" in _status_text(status).lower() or "phone" in _status_text(status).lower()
     display = _update_field(uploaded_view, "value")
@@ -244,7 +244,7 @@ def test_computer_upload_loads_drawing_editor():
             os.remove(path)
         except OSError:
             pass
-    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel = result
+    editor_update, status, _download, _output, _temp_id, stored, marks, _preview, flag, uploaded_view, editor_panel, editor_synced = result
     assert "successfully" in _status_text(status).lower()
     assert "draw" in _status_text(status).lower()
     editor_img = _update_field(editor_update, "value")
@@ -259,14 +259,14 @@ def test_computer_upload_loads_drawing_editor():
 def test_switch_to_computer_loads_editor_after_phone_upload():
     img = _solid_image((80, 60))
     encoded = app.encode_stored_image(img)
-    panel, editor, uploaded, status = app.handle_layout_change(app.MODE_COMPUTER, encoded)
+    panel, editor, uploaded, status, editor_synced = app.handle_layout_change(app.MODE_COMPUTER, encoded)
     assert _update_field(panel, "visible") is True
     assert _update_field(editor, "visible") is True
     assert _update_field(editor, "value") is not None
     assert _update_field(uploaded, "visible") is False
     assert "draw" in _status_text(status).lower()
 
-    panel, editor, uploaded, status = app.handle_layout_change(app.MODE_PHONE, encoded)
+    panel, editor, uploaded, status, editor_synced = app.handle_layout_change(app.MODE_PHONE, encoded)
     assert _update_field(panel, "visible") is False
     assert _update_field(uploaded, "visible") is True
     assert "not available on phones" in _status_text(status).lower()
@@ -375,7 +375,7 @@ def test_refuse_blur_when_suggestion_marks_missing():
         None,
         app.DEFAULT_BLUR_STRENGTH,
     )
-    output, status, _download, temp_id, preview, flag = result
+    output, status, _download, temp_id, preview, flag, *_refreshed = result
     assert output is None
     assert "expired" in _status_text(status).lower()
     assert temp_id is None
@@ -437,7 +437,7 @@ def test_successful_blur_uses_suggestion_marks():
         None,
         app.DEFAULT_BLUR_STRENGTH,
     )
-    output, status, _download, temp_id, _preview, _flag = result
+    output, status, _download, temp_id, _preview, _flag, *_refreshed = result
     assert output is not None
     assert "successfully" in _status_text(status).lower()
     assert isinstance(temp_id, str)
@@ -483,7 +483,7 @@ def test_upload_stores_compact_bytes_and_clears_marks():
             os.remove(path)
         except OSError:
             pass
-    _editor_update, status, _download, _output, temp_id, stored, marks, _preview, flag, _uploaded, _panel = result
+    _editor_update, status, _download, _output, temp_id, stored, marks, _preview, flag, _uploaded, _panel, _editor_synced = result
     assert "successfully" in _status_text(status).lower()
     assert isinstance(stored, (bytes, bytearray))
     assert app.decode_stored_image(stored).size == img.size
@@ -518,6 +518,7 @@ def test_exercise_upload_suggest_blur_on_synthetic_image():
     pending = suggest[4]
     assert "error loading image" not in suggest_status
     assert "does not match" not in suggest_status
+    assert suggest[5] is stored  # Re-saved so the session's 30-minute expiry restarts
 
     refused = app.handle_blur_click(
         editor, stored, None, True, None, app.DEFAULT_BLUR_STRENGTH
@@ -539,3 +540,97 @@ def test_exercise_upload_suggest_blur_on_synthetic_image():
     assert success[0] is not None
     assert "successfully" in _status_text(success[1]).lower()
     app.remove_temp_file(success[3])
+
+
+def _upload(img, mode):
+    handle, path = tempfile.mkstemp(suffix=".png", dir=tempfile.gettempdir())
+    os.close(handle)
+    try:
+        img.save(path, "PNG")
+        return app.handle_file_upload(path, None, mode)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def test_upload_and_layout_record_whether_editor_holds_the_upload():
+    img = _solid_image()
+    assert _upload(img, app.MODE_COMPUTER)[11] is True
+    phone = _upload(img, app.MODE_PHONE)
+    assert phone[11] is False
+    *_rest, synced = app.handle_layout_change(app.MODE_COMPUTER, phone[5])
+    assert synced is True
+    *_rest, synced = app.handle_layout_change(app.MODE_PHONE, phone[5])
+    assert synced == app.gr.skip()
+
+
+def test_phone_upload_ignores_strokes_left_in_hidden_editor():
+    """Strokes drawn on an earlier image must not be blurred onto a new Phone upload."""
+    old_image = _solid_image(color=(200, 200, 200))
+    new_stored = app.encode_stored_image(_solid_image(color=(10, 10, 10)))
+    stale_editor = _editor(old_image, [_brush_layer(old_image.size)])
+
+    # Editor known to hold another image: its strokes are ignored, so nothing is marked
+    ignored = app.handle_blur_click(stale_editor, new_stored, None, False, None, app.DEFAULT_BLUR_STRENGTH, False)
+    assert ignored[0] is None
+    assert "no areas marked" in _status_text(ignored[1]).lower()
+
+    # Suggestion marks still blur on the Phone layout
+    mask = np.zeros((48, 64), dtype=np.uint8)
+    mask[30:40, 40:60] = 1
+    blurred = app.handle_blur_click(stale_editor, new_stored, app.pack_marks(mask), True, None,
+                                    app.DEFAULT_BLUR_STRENGTH, False)
+    assert blurred[0] is not None
+    app.remove_temp_file(blurred[3])
+
+    # Unknown sync state (expired or never set) keeps using the strokes rather than dropping them
+    kept = app.handle_blur_click(_editor(app.decode_stored_image(new_stored), [_brush_layer((64, 48))]),
+                                 new_stored, None, False, None, app.DEFAULT_BLUR_STRENGTH, None)
+    assert kept[0] is not None
+    app.remove_temp_file(kept[3])
+
+
+def test_successful_blur_refreshes_session_expiry():
+    """Re-saving the original, marks and editor flag restarts their 30-minute time_to_live."""
+    img = _solid_image()
+    stored = app.encode_stored_image(img)
+    mask = np.zeros((48, 64), dtype=np.uint8)
+    mask[8:28, 8:28] = 1
+    marks = app.pack_marks(mask)
+    result = app.handle_blur_click(_editor(img), stored, marks, True, None, app.DEFAULT_BLUR_STRENGTH, True)
+    assert result[0] is not None
+    assert result[6] is stored and result[7] is marks and result[8] is True
+    app.remove_temp_file(result[3])
+
+    # Failures leave the session data alone
+    failed = app.handle_blur_click(_editor(img), None, marks, True, None, app.DEFAULT_BLUR_STRENGTH, True)
+    assert failed[6] == app.gr.skip()
+
+
+def test_non_numeric_blur_strength_is_rejected_cleanly():
+    img = _solid_image()
+    stored = app.encode_stored_image(img)
+    for bad in (None, "abc", [1]):
+        result = app.handle_blur_click(_editor(img, [_brush_layer(img.size)]), stored, None, False, None, bad)
+        assert result[0] is None
+        assert "blur strength must be a number" in _status_text(result[1]).lower()
+
+
+def test_transparent_palette_and_grayscale_pngs_keep_transparency():
+    palette = Image.new("P", (32, 32), 0)
+    palette.putpalette([0, 0, 0, 255, 0, 0] + [0] * 762)
+    ImageDraw.Draw(palette).rectangle([8, 8, 24, 24], fill=1)
+    palette.info["transparency"] = 0
+    gray_alpha = Image.new("LA", (32, 32), (128, 0))
+    ImageDraw.Draw(gray_alpha).rectangle([8, 8, 24, 24], fill=(200, 255))
+    for img in (palette, gray_alpha):
+        stored = app.decode_stored_image(app.encode_stored_image(img))
+        assert stored.mode == "RGBA"
+        assert stored.getpixel((0, 0))[3] == 0      # Transparent corner stays transparent
+        assert stored.getpixel((16, 16))[3] == 255  # Drawn square stays opaque
+
+
+def test_session_cap_leaves_room_for_passive_visitors():
+    assert app.MAX_STORED_SESSIONS >= 100

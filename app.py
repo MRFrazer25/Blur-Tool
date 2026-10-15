@@ -143,8 +143,10 @@ _PHONE_UA_MARKERS = (
 
 # Resource limits for a public deployment
 MAX_QUEUED_REQUESTS = 20         # Further requests get a "busy" error instead of piling up
-MAX_STORED_SESSIONS = 25         # Least recently used sessions beyond this are dropped from memory
-SESSION_DATA_TTL_SECONDS = 1800  # Per-session images/marks expire after 30 minutes without updates
+# Every page view creates a session (even without an upload), so the cap must leave room for
+# passive visitors; sessions without an upload hold almost nothing.
+MAX_STORED_SESSIONS = 100        # Least recently used sessions beyond this are dropped from memory
+SESSION_DATA_TTL_SECONDS = 1800  # Per-session data expires 30 minutes after the last upload, blur or suggestion
 
 # Blurred results go in a per-process folder so another user cannot pre-create a
 # shared name under the system temp directory. Files older than an hour are swept.
@@ -169,10 +171,12 @@ def is_within_temp_dir(path):
     return False
 
 def encode_stored_image(img):
-    """Compresses an uploaded image to PNG bytes (RGB unless alpha is actually used)."""
-    if img.mode == "RGBA":
-        alpha_min = img.getextrema()[3][0]
-        stored = img if alpha_min < 255 else img.convert("RGB")
+    """Compresses an uploaded image to PNG bytes (RGB unless alpha is actually used).
+    Palette and grayscale PNGs with transparency keep it (stored as RGBA)."""
+    if img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info:
+        rgba = img if img.mode == "RGBA" else img.convert("RGBA")
+        alpha_min = rgba.getextrema()[3][0]
+        stored = rgba if alpha_min < 255 else rgba.convert("RGB")
     elif img.mode == "RGB":
         stored = img
     else:
@@ -283,6 +287,12 @@ def unpack_marks(packed, expected_shape=None):
     if expected_shape is not None and mask.shape != expected_shape:
         return None
     return mask.astype(np.uint8)
+
+def editor_matches_upload(flag):
+    """False only when the server knows the editor does not hold the current upload (e.g. after a
+    Phone-layout upload, which leaves the hidden editor with an older image and its brush strokes).
+    None (expired or never set) keeps the old behavior, so brush strokes are never silently dropped."""
+    return flag is not False
 
 def suggestions_were_requested(flag):
     """True when the client says Privacy Suggestions are still expected to be applied."""
@@ -452,9 +462,20 @@ def apply_gaussian_blur(image_np, mask_np_binary, blur_strength):
         return np.dstack((blended_rgb_np, alpha_channel_np))
     return blended_rgb_np
 
-def _upload_return(editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel):
-    """Shared 11-value return for upload/clear (editor last extra is the drawing-editor panel)."""
-    return (editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel)
+def _upload_return(editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel, editor_synced):
+    """Shared 12-value return for upload/clear, in the order of the upload event's outputs."""
+    return (editor, status, download, output, temp, stored, marks, preview, flag, uploaded, panel, editor_synced)
+
+def _upload_error(message, current_temp_file_for_download, css_class="status-error"):
+    """Upload/clear return that only shows a message: keeps the current image, marks and editor."""
+    return _upload_return(
+        gr.update(),
+        gr.HTML(message, elem_classes=css_class),
+        gr.DownloadButton(visible=False),
+        None,
+        current_temp_file_for_download,
+        *([gr.skip()] * 7),
+    )
 
 
 # Gradio Event Handlers
@@ -469,41 +490,22 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mo
 
             if not is_within_temp_dir(resolved_upload_path):
                 logger.error(f"Security alert: Upload path '{uploaded_file_path}' resolves to '{resolved_upload_path}', which is outside the allowed temp directories. Aborting upload.")
-                return _upload_return(
-                    gr.update(),
-                    gr.HTML("Invalid file path detected. Upload failed.", elem_classes="status-error"),
-                    gr.DownloadButton(visible=False),
-                    None,
-                    current_temp_file_for_download,
-                    gr.skip(),
-                    gr.skip(),
-                    gr.skip(),
-                    gr.skip(),
-                    gr.skip(),
-                    gr.skip(),
-                )
+                return _upload_error("Invalid file path detected. Upload failed.", current_temp_file_for_download)
             
             # Only decode PNG/JPEG regardless of file extension, and check size before decoding pixels
             with Image.open(resolved_upload_path, formats=ALLOWED_IMAGE_FORMATS) as opened_img:
                 if opened_img.width * opened_img.height > MAX_IMAGE_PIXELS:
                     logger.warning(f"Rejected upload of {opened_img.width}x{opened_img.height} image (over pixel limit).")
-                    return _upload_return(
-                        gr.update(),
-                        gr.HTML(f"Image is too large ({opened_img.width}x{opened_img.height}). Please resize it to under {MAX_IMAGE_PIXELS // 1_000_000} megapixels.", elem_classes="status-error"),
-                        gr.DownloadButton(visible=False),
-                        None,
+                    return _upload_error(
+                        f"Image is too large ({opened_img.width}x{opened_img.height}). "
+                        f"Please resize it to under {MAX_IMAGE_PIXELS // 1_000_000} megapixels.",
                         current_temp_file_for_download,
-                        gr.skip(),
-                        gr.skip(),
-                        gr.skip(),
-                        gr.skip(),
-                        gr.skip(),
-                        gr.skip(),
                     )
                 # Apply camera rotation so phone photos are not shown sideways
                 img = ImageOps.exif_transpose(opened_img)
+                img.load()
             stored_original = encode_stored_image(img)
-            source = decode_stored_image(stored_original)
+            source = img  # Same pixels as the stored copy; no need to decode it again
             logger.info("Image loaded successfully.")
             
             # Clean up previous temporary file for download, if one exists
@@ -525,6 +527,7 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mo
                     False,
                     gr.update(value=None, visible=False),
                     gr.update(visible=True),
+                    True,  # The editor now holds this upload
                 )
             return _upload_return(
                 gr.skip(),
@@ -541,59 +544,30 @@ def handle_file_upload(uploaded_file_path, current_temp_file_for_download, ui_mo
                 False,
                 gr.update(value=screen_preview(source), visible=True),
                 gr.update(visible=False),
+                False,  # The hidden editor still holds any earlier image: ignore it
             )
         except (UnidentifiedImageError, Image.DecompressionBombError) as e:
             logger.warning(f"Rejected uploaded file: {e}")
-            return _upload_return(
-                gr.update(),
-                gr.HTML("Could not open this file. Please upload a valid PNG or JPG image under 40 megapixels.", elem_classes="status-error"),
-                gr.DownloadButton(visible=False),
-                None,
+            return _upload_error(
+                "Could not open this file. Please upload a valid PNG or JPG image under 40 megapixels.",
                 current_temp_file_for_download,
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
             )
         except Exception as e:
             # Details are logged server-side only, so file paths are never shown to the user
             logger.error(f"Error processing uploaded file: {e}", exc_info=True)
-            return _upload_return(
-                gr.update(),
-                gr.HTML("Error loading image. Please try a different file.", elem_classes="status-error"),
-                gr.DownloadButton(visible=False),
-                None,
-                current_temp_file_for_download,
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-                gr.skip(),
-            )
+            return _upload_error("Error loading image. Please try a different file.", current_temp_file_for_download)
     
     # Case: No file uploaded or file cleared - discard the result and any pending download.
     # The editor is left as-is: emptying it after drawing leaves the Gradio 6 editor stuck
     # loading, and the next upload replaces its contents anyway.
     remove_temp_file(current_temp_file_for_download)
-    return _upload_return(
-        gr.update(),
-        gr.HTML("No file provided or file cleared.", elem_classes="status-info"),
-        gr.DownloadButton(visible=False),
-        None,
-        None,
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-    )
+    return _upload_error("No file provided or file cleared.", None, css_class="status-info")
 
-def _blur_status_return(output_image, status_html, download_button, temp_id, preview_update=None, suggestions_flag=None):
-    """Shared return shape for Apply Blur (includes preview + client suggestion flag)."""
+def _blur_status_return(output_image, status_html, download_button, temp_id, preview_update=None, suggestions_flag=None, refreshed_state=None):
+    """Shared return shape for Apply Blur (includes preview + client suggestion flag).
+    refreshed_state = (original, marks, editor_synced) re-saves those values so their
+    30-minute expiry restarts while the session is in use."""
+    original, marks, editor_synced = refreshed_state if refreshed_state is not None else (gr.skip(),) * 3
     return (
         output_image,
         status_html,
@@ -601,13 +575,27 @@ def _blur_status_return(output_image, status_html, download_button, temp_id, pre
         temp_id,
         gr.skip() if preview_update is None else preview_update,
         gr.skip() if suggestions_flag is None else suggestions_flag,
+        original,
+        marks,
+        editor_synced,
     )
 
-def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pending, current_temp_file_for_download, blur_strength_slider_value):
+def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pending, current_temp_file_for_download, blur_strength_slider_value, editor_synced=None):
     """Applies blur to the marked areas (editor brush strokes plus saved Privacy Suggestions marks)
     and prepares the result for download. Uses the validated original upload, never the
     editor background as a fallback. Refuses if suggestions were requested but the
     server-side marks have expired or been evicted."""
+    try:
+        blur_strength = float(blur_strength_slider_value)
+    except (TypeError, ValueError):
+        return _blur_status_return(
+            None,
+            gr.HTML(f"Blur strength must be a number from {MIN_BLUR_STRENGTH} to {MAX_BLUR_STRENGTH}.", elem_classes="status-error"),
+            gr.DownloadButton(visible=False),
+            current_temp_file_for_download,
+        )
+    if not editor_matches_upload(editor_synced):
+        editor_data = None  # Hidden editor holds an older image (Phone upload): use suggestions only
     source_pil, layers_pil, error = validate_editor_payload(editor_data, original_image)
     if error:
         return _blur_status_return(
@@ -658,7 +646,7 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
         source_np = np.array(source_pil.convert("RGB"))
         result_mode = "RGB"
 
-    blurred_image_np = apply_gaussian_blur(source_np, final_mask_np_binary, blur_strength_slider_value)
+    blurred_image_np = apply_gaussian_blur(source_np, final_mask_np_binary, blur_strength)
     blurred_image_pil = Image.fromarray(blurred_image_np, result_mode)
 
     new_temp_file_for_download_path = None
@@ -678,6 +666,7 @@ def handle_blur_click(editor_data, original_image, saved_marks, suggestions_pend
             ),
             gr.DownloadButton(value=new_temp_file_for_download_path, visible=True, label="Download Blurred Image"),
             register_output_file(new_temp_file_for_download_path),
+            refreshed_state=(original_image, saved_marks, editor_synced if editor_synced is not None else gr.skip()),
         )
     except Exception as e:
         logger.error(f"Error saving blurred image to temp file: {e}", exc_info=True)
@@ -761,7 +750,7 @@ SUGGESTION_MESSAGES = {
                  "No faces detected. Faces that are very small, hidden, or turned away can be missed. Try manual drawing instead."),
 }
 
-def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECTS):
+def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECTS, editor_synced=None):
     """Uses YOLO26 to detect privacy targets (whole objects, exact outlines, or faces).
 
     Each run replaces the previous suggestions. The detections are kept server-side as a mask and
@@ -769,7 +758,8 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
     editor. The editor itself is never updated here: pushing new content into the Gradio 6 editor
     while it is still syncing recent brush strokes can leave it stuck loading.
 
-    Returns (status, download button, marks, preview image update, suggestions-pending flag)."""
+    Returns (status, download button, marks, preview image update, suggestions-pending flag,
+    original image). The original is re-saved on success so its 30-minute expiry restarts."""
     model = get_yolo_model(detection_mode)
     if model is None:
         return (
@@ -777,14 +767,18 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
             gr.DownloadButton(visible=False),
             gr.skip(),
             gr.skip(),
+            gr.skip(),
             gr.skip()
         )
 
+    if not editor_matches_upload(editor_synced):
+        editor_data = None  # Hidden editor holds an older image (Phone upload)
     base_pil, _layers, error = validate_editor_payload(editor_data, original_image)
     if error:
         return (
             gr.HTML(error, elem_classes="status-error"),
             gr.DownloadButton(visible=False),
+            gr.skip(),
             gr.skip(),
             gr.skip(),
             gr.skip()
@@ -813,19 +807,20 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
                 gr.DownloadButton(visible=False),
                 None,
                 gr.update(value=None, visible=False),
-                False
+                False,
+                original_image,
             )
 
         # New suggestions replace the previous ones (brush strokes stay in the editor)
-        marks = pack_marks(layers_to_mask([suggestion_layer_pil], base_pil.size))
-        preview_marks = unpack_marks(marks)
+        mask = layers_to_mask([suggestion_layer_pil], base_pil.size)
 
         return (
             gr.HTML(found_msg.format(n=found_count), elem_classes="status-success"),
             gr.DownloadButton(visible=False),
-            marks,
-                gr.update(value=screen_preview(render_marks_preview(base_pil, preview_marks)), visible=True),
-            True
+            pack_marks(mask),
+            gr.update(value=screen_preview(render_marks_preview(base_pil, mask)), visible=True),
+            True,
+            original_image,
         )
 
     except Exception as e:
@@ -833,6 +828,7 @@ def handle_suggest_click(editor_data, original_image, detection_mode=MODE_OBJECT
         return (
             gr.HTML("Error with Privacy Suggestions. Please try again or mark areas manually.", elem_classes="status-error"),
             gr.DownloadButton(visible=False),
+            gr.skip(),
             gr.skip(),
             gr.skip(),
             gr.skip()
@@ -864,6 +860,7 @@ def handle_layout_change(ui_mode, original_image):
                 "Computer layout. Draw with the brush or use Privacy Suggestions, then Apply Blur.",
                 elem_classes="status-info",
             ),
+            True if source is not None else gr.skip(),  # Editor reloaded with the current upload
         )
     uploaded = (
         gr.update(value=screen_preview(source), visible=True)
@@ -875,6 +872,7 @@ def handle_layout_change(ui_mode, original_image):
         gr.skip(),
         uploaded,
         gr.HTML(PHONE_DRAWING_LIMITATION, elem_classes="status-info"),
+        gr.skip(),  # Editor keeps the current upload's strokes
     )
 
 
@@ -1099,13 +1097,17 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     # ID of the temporary blurred image for the download button (never a file path).
     # The file is deleted when the session data expires. The hourly sweep runs only while this process is up.
     temp_file_path_for_download_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS, delete_callback=remove_temp_file)
-    # Compact PNG bytes of the uploaded image (kept server-side, freed when the session ends).
+    # Compact PNG bytes of the uploaded image (kept server-side; re-saved on each blur or
+    # suggestion so the 30-minute expiry counts from the last use, not the upload).
     original_image_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
     # Packed bitmask from the latest Privacy Suggestions run (brush strokes stay in the editor).
     marks_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
     # Lives in the browser, so it still tells the server suggestions were requested after
     # server-side marks expire or the session is evicted.
     suggestions_pending = gr.Checkbox(value=False, visible=False, interactive=False, label="")
+    # Whether the drawing editor holds the current upload (False after a Phone-layout upload,
+    # when the hidden editor may still hold an older image and its brush strokes).
+    editor_synced_state = gr.State(None, time_to_live=SESSION_DATA_TTL_SECONDS)
 
     layout_radio = gr.Radio(
         choices=[MODE_PHONE, MODE_COMPUTER],
@@ -1206,32 +1208,32 @@ with gr.Blocks(title="Blur Tool", delete_cache=(3600, 3600), analytics_enabled=F
     layout_radio.change(
         fn=handle_layout_change,
         inputs=[layout_radio, original_image_state],
-        outputs=[editor_panel, image_editor, uploaded_view, status_html],
+        outputs=[editor_panel, image_editor, uploaded_view, status_html, editor_synced_state],
     )
     # File uploader actions
     file_uploader.upload(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state, layout_radio],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel, editor_synced_state]
     )
     file_uploader.clear(
         fn=handle_file_upload,
         inputs=[file_uploader, temp_file_path_for_download_state, layout_radio],
-        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel]
+        outputs=[image_editor, status_html, download_button, output_image, temp_file_path_for_download_state, original_image_state, marks_state, marks_preview, suggestions_pending, uploaded_view, editor_panel, editor_synced_state]
     )
     
     # Blur button actions
     blur_button.click(
         fn=handle_blur_click,
-        inputs=[image_editor, original_image_state, marks_state, suggestions_pending, temp_file_path_for_download_state, blur_strength_slider],
-        outputs=[output_image, status_html, download_button, temp_file_path_for_download_state, marks_preview, suggestions_pending]
+        inputs=[image_editor, original_image_state, marks_state, suggestions_pending, temp_file_path_for_download_state, blur_strength_slider, editor_synced_state],
+        outputs=[output_image, status_html, download_button, temp_file_path_for_download_state, marks_preview, suggestions_pending, original_image_state, marks_state, editor_synced_state]
     )
     
     # Suggest button actions
     suggest_button.click(
         fn=handle_suggest_click,
-        inputs=[image_editor, original_image_state, detection_mode_radio],
-        outputs=[status_html, download_button, marks_state, marks_preview, suggestions_pending]
+        inputs=[image_editor, original_image_state, detection_mode_radio, editor_synced_state],
+        outputs=[status_html, download_button, marks_state, marks_preview, suggestions_pending, original_image_state]
     )
 
     # Clear marks button actions

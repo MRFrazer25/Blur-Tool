@@ -107,7 +107,7 @@ Where the photo goes depends on where the app is running. The same `app.py` show
 
 * The photo is processed on that computer. It is not uploaded anywhere. The YOLO files that download on first use are the models, not your photo
 * Gradio and Ultralytics analytics are turned off in the app
-* The stored image, suggestion marks, and download id use a 30-minute Gradio `time_to_live`, counted from the last time each value was saved. How Gradio deletes state and cached uploads is in [Gradio's resource cleanup guide](https://www.gradio.app/guides/resource-cleanup). Who can request a cached file is in [Gradio's file access guide](https://www.gradio.app/guides/file-access)
+* The stored image, suggestion marks, and download id use a 30-minute Gradio `time_to_live`, counted from the last time each value was saved. Each Apply Blur or Privacy Suggestions saves them again, so the 30 minutes restart while you are using the app. How Gradio deletes state and cached uploads is in [Gradio's resource cleanup guide](https://www.gradio.app/guides/resource-cleanup). Who can request a cached file is in [Gradio's file access guide](https://www.gradio.app/guides/file-access)
 * Downloads are new PNG files without the original photo's location or camera data. The session copy used for blurring is also a PNG saved without that EXIF
 * No public share link is created unless you set `GRADIO_SHARE=True`. Anyone with that link sends their photos to your computer for processing
 
@@ -120,7 +120,7 @@ Where the photo goes depends on where the app is running. The same `app.py` show
 
 **Either way:**
 
-* **Abuse Limits:** At most 20 queued requests and 25 stored sessions at a time. The 25 MB upload cap, session cap, and output cleanup apply whether you start with `python app.py`, `gradio app.py`, or on the Space
+* **Abuse Limits:** At most 20 queued requests and 100 stored sessions at a time (every page view counts as a session, so the cap leaves room for visitors who never upload). The 25 MB upload cap, session cap, and output cleanup apply whether you start with `python app.py`, `gradio app.py`, or on the Space
 * **Upload Limits:** Only real PNG/JPG files are accepted (checked by content, not just extension), up to 25 MB and 40 megapixels. The same size and layer limits are checked again when you blur or run Privacy Suggestions
 * **Safe Errors:** Error messages shown in the app never include server file paths or internal details
 * **Path Validation:** File paths are checked to stay inside the temp/upload directories before any read or delete. Blurred outputs are written to a per-process temp folder
