@@ -3,4 +3,4 @@ gradio==6.30.0
 ultralytics==8.4.177
 opencv-python==5.0.0.93
 numpy==2.4.6
-Pillow==12.3.0
+Pillow==13.0.0
