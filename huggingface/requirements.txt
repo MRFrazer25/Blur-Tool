@@ -1,6 +1,0 @@
-# The Space's requirements.txt. The Space installs gradio itself from sdk_version in README.md.
-# Same pins as ../requirements.txt, plus Pillow 13 (see ../requirements-overrides.txt).
-ultralytics==8.4.177
-opencv-python==5.0.0.93
-numpy==2.5.4
-pillow==13.0.0

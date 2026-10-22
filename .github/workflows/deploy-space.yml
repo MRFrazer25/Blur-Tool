@@ -1,0 +1,63 @@
+name: Deploy to Hugging Face Space
+
+# Publishes app.py to https://huggingface.co/spaces/mattrf/Blur-Tool, but only after the Tests
+# workflow has passed on main. The Space's files are generated from this repo so they can't drift:
+#   requirements.txt = requirements.txt without gradio (the Space installs it from sdk_version)
+#                      + requirements-overrides.txt
+#   README.md        = huggingface/README.md with sdk_version set to the pinned gradio version
+# Needs a Hugging Face write token saved as the repository secret HF_TOKEN; without it the job
+# skips with a warning.
+on:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-space
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned to full commit SHAs so a moved tag can't change what runs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Assemble the Space
+        run: |
+          mkdir space
+          cp app.py space/
+          gradio=$(sed -n 's/^gradio==\([0-9.]*\).*/\1/p' requirements.txt)
+          test -n "$gradio"
+          sed "s/^sdk_version: .*/sdk_version: $gradio/" huggingface/README.md > space/README.md
+          { echo "# Generated from the GitHub repo by .github/workflows/deploy-space.yml. Edit there, not here."
+            grep -vE '^\s*(#|$)|^gradio==' requirements.txt
+            grep -vE '^\s*(#|$)' requirements-overrides.txt; } > space/requirements.txt
+          cat space/requirements.txt
+          grep '^sdk_version' space/README.md
+
+      - name: Upload to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::warning::The HF_TOKEN secret is not set, so the Space was not updated."
+            exit 0
+          fi
+          pip install -r huggingface/deploy-requirements.txt
+          hf upload mattrf/Blur-Tool space . --repo-type space --commit-message "Deploy ${SHA::7} from GitHub"
