@@ -1,0 +1,8 @@
+# Install after requirements.txt: pip install -r requirements-overrides.txt
+#
+# gradio 6.30.0 (the latest release) still caps pillow<13, but Pillow 13.0.0 fixes dozens of CVEs,
+# including two critical ones. The app's tests and real-image checks (upload, EXIF rotation,
+# transparency, YOLO suggestions, blur) pass on Pillow 13. Installing it as a second step makes pip
+# print a conflict notice about gradio's cap, which is expected. Remove this file once gradio allows
+# Pillow 13 and pin Pillow in requirements.txt again.
+pillow==13.0.0

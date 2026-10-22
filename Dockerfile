@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 # OpenCV needs these system libraries on the slim image
 RUN apt-get update \
@@ -12,8 +12,10 @@ WORKDIR /app
 
 # CPU-only PyTorch. The default Linux wheel bundles CUDA and is several GB larger.
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-COPY requirements.txt .
+COPY requirements.txt requirements-overrides.txt ./
 RUN pip install -r requirements.txt
+# Second step on purpose: see requirements-overrides.txt
+RUN pip install -r requirements-overrides.txt
 
 # Bake the three YOLO26 weights into the image so suggestions work offline and
 # are not downloaded again on every `docker run --rm`.

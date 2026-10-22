@@ -25,7 +25,7 @@ An intelligent image privacy application that combines manual drawing tools with
 
 ## Requirements
 
-* Python 3.10+
+* Python 3.12+
 * Gradio 6+ (installed via `requirements.txt`)
 * Internet connection for AI model download (first use only)
 * Modern web browser with Canvas/WebGL support (Chrome recommended)
@@ -36,7 +36,7 @@ An intelligent image privacy application that combines manual drawing tools with
 
 **[Blur Tool](https://huggingface.co/spaces/mattrf/Blur-Tool)**
 
-The Space uses the same `app.py` and `requirements.txt` as this repository. Its README (with the Space settings header) is kept in [huggingface/README.md](huggingface/README.md).
+The Space uses the same `app.py` as this repository. Its README (with the Space settings header) and its `requirements.txt` are kept in [huggingface/](huggingface/): the same pins without Gradio (the Space installs Gradio from `sdk_version`) and with Pillow 13.
 
 ### Option 2: Local Installation
 
@@ -48,8 +48,11 @@ The Space uses the same `app.py` and `requirements.txt` as this repository. Its 
 
 2. **Install Dependencies:**
    ```bash
-   pip install -U -r requirements.txt
+   pip install -r requirements.txt
+   pip install -r requirements-overrides.txt
    ```
+
+   The second command installs Pillow 13, which fixes security issues that the current Gradio release doesn't allow yet. pip prints a notice about Gradio's version cap; that's expected (see `requirements-overrides.txt`).
 
 3. **Run Application:**
    ```bash
@@ -95,7 +98,7 @@ Choose between manual precision drawing or AI-assisted detection based on your w
 * **Drawing Tools Not Working:** Firefox may have Canvas/WebGL rendering limitations. Try Chrome, Safari, or Edge for full functionality.
 * **Marking areas on a phone:** On phones, the Phone layout replaces the drawing editor (which phones can't run) with tap-to-mark: tap the photo to mark a circle to blur, set its size with Tap Mark Size, and use Undo Last Tap or Clear Taps to fix mistakes. Privacy Suggestions, Apply Blur and download work the same. For freehand drawing, open the page on a computer and choose Computer.
 * **AI Suggestions Unavailable:** Check internet connection for initial YOLO26 model downloads (three small models, about 20 MB total). Manual drawing tools will still work offline.
-* **Application Won't Start:** Ensure Python 3.10+ and run `pip install -U -r requirements.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
+* **Application Won't Start:** Ensure Python 3.12+ and run `pip install -r requirements.txt` then `pip install -r requirements-overrides.txt`. A `TypeError` about `theme` or `css` in `launch()` means an older Gradio (5.x or earlier) is installed.
 * **Image Too Large:** Images over 40 megapixels are rejected. Resize them before uploading
 * **Performance Issues:** Consider resizing large images before processing
 * **Blur Not Applied:** Ensure you've drawn areas or used AI suggestions before clicking "Apply Blur"

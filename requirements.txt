@@ -2,5 +2,5 @@
 gradio==6.30.0
 ultralytics==8.4.177
 opencv-python==5.0.0.93
-numpy==2.4.6
-Pillow==12.3.0
+numpy==2.5.4
+# Pillow is pinned in requirements-overrides.txt, installed after this file
