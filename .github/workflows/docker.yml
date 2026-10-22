@@ -1,0 +1,40 @@
+name: Docker
+
+# Builds the image and starts it the way the Hugging Face Space does (uid 1000, SPACE_ID set,
+# port 7860), then waits for the app to answer. Catches a container that builds but never starts.
+on:
+  push:
+    branches: [main]
+    paths: [Dockerfile, app.py, "requirements*.txt", .github/workflows/docker.yml]
+  pull_request:
+    paths: [Dockerfile, app.py, "requirements*.txt", .github/workflows/docker.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Actions are pinned to full commit SHAs so a moved tag can't change what runs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: docker build -t blur-tool .
+
+      - name: Start like the Space and wait for the app
+        run: |
+          docker run -d --name app --user 1000 -e SPACE_ID=ci/blur-tool -p 7860:7860 blur-tool
+          for i in $(seq 1 60); do
+            if curl -fs -o /dev/null http://127.0.0.1:7860/; then echo "App answered after ~$((i*3))s"; exit 0; fi
+            sleep 3
+          done
+          echo "App did not answer within 3 minutes"; exit 1
+
+      - name: Container logs
+        if: always()
+        run: docker logs app 2>&1 | tail -100
