@@ -36,7 +36,7 @@ An intelligent image privacy application that combines manual drawing tools with
 
 **[Blur Tool](https://huggingface.co/spaces/mattrf/Blur-Tool)**
 
-The Space is deployed from this repository by [deploy-space.yml](.github/workflows/deploy-space.yml) after the tests pass on `main`. It uses the same `app.py`; its `requirements.txt` is generated from this repo's pins (without Gradio, which the Space installs from `sdk_version`, plus Pillow 13), and its README header lives in [huggingface/README.md](huggingface/README.md) with `sdk_version` filled in from the pinned Gradio version.
+The Space is deployed from this repository by [deploy-space.yml](.github/workflows/deploy-space.yml) after the tests pass on `main`. It is a Docker Space built from the same `Dockerfile`, `app.py` and pinned requirements as a local Docker run; its settings header lives in [huggingface/README.md](huggingface/README.md).
 
 ### Option 2: Local Installation
 

@@ -3,10 +3,8 @@ title: Blur Tool
 emoji: 👀
 colorFrom: green
 colorTo: blue
-sdk: gradio
-sdk_version: 6.30.0
-python_version: "3.12"
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 short_description: 'Blur images with freedom: Powered by Python, Gradio, YOLO26'

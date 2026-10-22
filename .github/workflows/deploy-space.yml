@@ -1,10 +1,12 @@
 name: Deploy to Hugging Face Space
 
-# Publishes app.py to https://huggingface.co/spaces/mattrf/Blur-Tool, but only after the Tests
-# workflow has passed on main. The Space's files are generated from this repo so they can't drift:
-#   requirements.txt = requirements.txt without gradio (the Space installs it from sdk_version)
-#                      + requirements-overrides.txt
-#   README.md        = huggingface/README.md with sdk_version set to the pinned gradio version
+# Publishes the app to https://huggingface.co/spaces/mattrf/Blur-Tool, but only after the Tests
+# workflow has passed on main. The Space is a Docker Space built from this repo's Dockerfile, so it
+# installs exactly what CI tested, including the second-step Pillow install from
+# requirements-overrides.txt (a Gradio-SDK Space installs requirements and Gradio in one pip
+# command, which can't get past Gradio's pillow<13 cap).
+# Uploaded: app.py, Dockerfile, requirements.txt, requirements-overrides.txt, and
+# huggingface/README.md as README.md (the Space settings header). Nothing else leaves GitHub.
 # Needs a Hugging Face write token saved as the repository secret HF_TOKEN; without it the job
 # skips with a warning.
 on:
@@ -40,15 +42,9 @@ jobs:
       - name: Assemble the Space
         run: |
           mkdir space
-          cp app.py space/
-          gradio=$(sed -n 's/^gradio==\([0-9.]*\).*/\1/p' requirements.txt)
-          test -n "$gradio"
-          sed "s/^sdk_version: .*/sdk_version: $gradio/" huggingface/README.md > space/README.md
-          { echo "# Generated from the GitHub repo by .github/workflows/deploy-space.yml. Edit there, not here."
-            grep -vE '^\s*(#|$)|^gradio==' requirements.txt
-            grep -vE '^\s*(#|$)' requirements-overrides.txt; } > space/requirements.txt
-          cat space/requirements.txt
-          grep '^sdk_version' space/README.md
+          cp app.py Dockerfile requirements.txt requirements-overrides.txt space/
+          cp huggingface/README.md space/README.md
+          ls space
 
       - name: Upload to the Space
         env:
