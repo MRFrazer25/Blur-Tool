@@ -1,5 +1,9 @@
 # Blur Tool
 
+[![Tests](https://github.com/MRFrazer25/Blur-Tool/actions/workflows/tests.yml/badge.svg)](https://github.com/MRFrazer25/Blur-Tool/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/MRFrazer25/Blur-Tool/blob/main/LICENSE)
+[![Open in Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-sm.svg)](https://huggingface.co/spaces/mattrf/Blur-Tool)
+
 An intelligent image privacy application that combines manual drawing tools with AI-powered object detection for precise area blurring. Built with Gradio ImageEditor and YOLO26 via Ultralytics, it processes images locally using OpenCV with configurable Gaussian blur kernels while providing both manual control and automated privacy suggestions.
 
 ![Blur Tool with the 1927 Solvay Conference photo loaded, showing Faces only suggestions highlighted in red and the blurred result](docs/screenshot.png)
