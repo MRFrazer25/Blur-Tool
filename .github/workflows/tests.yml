@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Daily run on main. Dependabot's auto-merges are made with GITHUB_TOKEN, which never starts push
+  # workflows, so without this main isn't tested after them and the Space deploy (which follows
+  # this workflow) never sees them. Also re-runs pip-audit against newly published advisories.
+  schedule:
+    - cron: "17 6 * * *"
 
 # Read-only token: this workflow never writes to the repository
 permissions:
