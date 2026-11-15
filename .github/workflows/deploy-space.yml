@@ -2,10 +2,8 @@ name: Deploy to Hugging Face Space
 
 # Publishes the app to https://huggingface.co/spaces/mattrf/Blur-Tool, but only after the Tests
 # workflow has passed on main. The Space is a Docker Space built from this repo's Dockerfile, so it
-# installs exactly what CI tested, including the second-step Pillow install from
-# requirements-overrides.txt (a Gradio-SDK Space installs requirements and Gradio in one pip
-# command, which can't get past Gradio's pillow<13 cap).
-# Uploaded: app.py, Dockerfile, requirements.txt, requirements-overrides.txt, and
+# installs exactly what CI tested.
+# Uploaded: app.py, Dockerfile, requirements.txt, and
 # huggingface/README.md as README.md (the Space settings header). Nothing else leaves GitHub.
 # Needs a Hugging Face write token saved as the repository secret HF_TOKEN; without it the job
 # skips with a warning.
@@ -50,7 +48,7 @@ jobs:
       - name: Assemble the Space
         run: |
           mkdir space
-          cp app.py Dockerfile requirements.txt requirements-overrides.txt space/
+          cp app.py Dockerfile requirements.txt space/
           cp huggingface/README.md space/README.md
           ls space
 

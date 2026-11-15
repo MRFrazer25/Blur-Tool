@@ -12,10 +12,8 @@ WORKDIR /app
 
 # CPU-only PyTorch. The default Linux wheel bundles CUDA and is several GB larger.
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-COPY requirements.txt requirements-overrides.txt ./
+COPY requirements.txt ./
 RUN pip install -r requirements.txt
-# Second step on purpose: see requirements-overrides.txt
-RUN pip install -r requirements-overrides.txt
 
 # Bake the three YOLO26 weights into the image so suggestions work offline and
 # are not downloaded again on every `docker run --rm`.
