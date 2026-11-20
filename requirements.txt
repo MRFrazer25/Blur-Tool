@@ -1,6 +1,6 @@
 # Exact versions. Dependabot proposes updates weekly, once a release is 7 days old (.github/dependabot.yml).
 gradio==6.32.0
-ultralytics==8.4.204
+ultralytics==8.4.212
 opencv-python==5.0.0.93
 numpy==2.5.4
 # Pulled in by Gradio and Ultralytics; pinned for its security fixes
